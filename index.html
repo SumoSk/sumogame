@@ -772,6 +772,8 @@ canvas { touch-action: none; }
     suppressClickUntil: 0,
     touchMode: null,
     touchLast: null,
+    touchBuildStart: null,
+    touchBuildCurrent: null,
     lastDailyAbsDay: -1,
     immigrationTick: 0,
     passTick: 0,
@@ -887,6 +889,20 @@ canvas { touch-action: none; }
     const pre = idx(px, py);
     return hasRoadLink(pre, b.entrance) ? pre : null;
   }
+  function allBuildingApproachPredecessors(b) {
+    if (!b || b.entrance == null) return [];
+    const out = [];
+    const links = roadLinks.get(b.entrance);
+    if (links) {
+      for (const ni of links) if (road[ni] && hasRoadLink(ni, b.entrance)) out.push(ni);
+    }
+    const preferred = approachPredecessorForBuilding(b);
+    if (preferred != null && out.includes(preferred)) {
+      out.splice(out.indexOf(preferred), 1);
+      out.unshift(preferred);
+    }
+    return out;
+  }
   function exitSuccessorForBuilding(b) {
     if (!b || b.entrance == null || !b.entryDirKey) return null;
     const post = neighborByDir(b.entrance, b.entryDirKey);
@@ -904,16 +920,23 @@ canvas { touch-action: none; }
       if (post != null && post !== start) { prefix = [start]; start = post; }
     }
     const destB = opts.destBuildingId ? buildingById(opts.destBuildingId) : null;
-    if (destB && destB.entrance === goal && destB.entryDirKey) {
-      const pre = approachPredecessorForBuilding(destB);
-      if (pre == null) {
-        addAlert('ทางเข้าอาคารไม่ถูกฝั่ง', `${destB.name} #${destB.id} ต้องเข้าจากเลนฝั่งอาคาร กรุณาต่อถนนให้มีทางเข้าถึงเลนนั้น`, 1, 'warn');
-        return [];
+    if (destB && destB.entrance === goal) {
+      // อาคารใช้ entrance บนถนนเป็น drop-off node: รถถึงช่องถนนที่ติดอาคารแล้วถือว่าเข้าอาคารสำเร็จ
+      // ไม่บังคับให้ต้องวน/กลับรถเพื่อเข้าจากทิศเดียว เพราะบน iPad และถนนปลายตันทำให้รถค้างหน้าอาคารได้ง่าย
+      const direct = findPath(start, goal, true, { allowDeadEndUTurn: true });
+      if (direct.length) return prefix.length ? prefix.concat(direct) : direct;
+      const candidates = allBuildingApproachPredecessors(destB);
+      for (const pre of candidates) {
+        const midTry = findPath(start, pre, true, { allowDeadEndUTurn: true });
+        if (midTry.length) {
+          const path = prefix.length ? prefix.concat(midTry) : midTry;
+          if (path[path.length - 1] !== opts.toIdx && hasRoadLink(path[path.length - 1], opts.toIdx)) path.push(opts.toIdx);
+          return path;
+        }
       }
-      goal = pre;
-      appendGoal = true;
+      appendGoal = false;
     }
-    const mid = findPath(start, goal, false);
+    const mid = findPath(start, goal, false, { allowDeadEndUTurn: true });
     if (!mid.length) return [];
     let path = prefix.length ? prefix.concat(mid) : mid;
     if (appendGoal && path[path.length - 1] !== opts.toIdx) path.push(opts.toIdx);
@@ -1853,10 +1876,12 @@ canvas { touch-action: none; }
   const gScore = new Float32Array(MAP_SIZE);
   let searchToken = 1;
 
-  function findPath(start, goal, quiet = false) {
+  function findPath(start, goal, quiet = false, opts = {}) {
     if (start === goal) return [start];
     if (!road[start] || !road[goal]) return [];
-    const cacheKey = `${roadVersion}:${start}:${goal}`;
+    const initialPrev = Number.isInteger(opts.initialPrev) ? opts.initialPrev : null;
+    const enforceNoUTurn = opts.enforceNoUTurn !== false;
+    const cacheKey = `${roadVersion}:${start}:${goal}:${enforceNoUTurn ? (initialPrev ?? 'noPrev') : 'free'}`;
     const cached = pathCache.get(cacheKey);
     if (cached) return cached;
 
@@ -1877,6 +1902,9 @@ canvas { touch-action: none; }
       for (const ni of linkedNeighbors(cur)) {
         if (!road[ni]) continue;
         if (closedMark[ni] === searchToken) continue;
+        const prevForTurn = cur === start ? initialPrev : cameFrom[cur];
+        // ห้ามกลับรถกลางถนน/สามแยก/ทางโค้ง: กลับรถได้เฉพาะ 4 แยกเท่านั้น
+        if (enforceNoUTurn && wouldUTurn(prevForTurn, cur, ni) && !canUTurnAtForPath(cur, prevForTurn, opts)) continue;
         const cx = cur % MAP_W, cy = Math.floor(cur / MAP_W);
         const nx = ni % MAP_W, ny = Math.floor(ni / MAP_W);
         const dx = nx - cx, dy = ny - cy;
@@ -1915,6 +1943,49 @@ canvas { touch-action: none; }
     return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) * 0.8;
   }
 
+  function isAtBuildingDropoff(v) {
+    if (!v || !v.destBuildingId) return false;
+    const b = buildingById(v.destBuildingId);
+    if (!b || b.entrance == null) return false;
+    return v.currentIdx === b.entrance;
+  }
+
+  function rerouteVehicleHomeOrExit(v, reason = 'ทางขาด') {
+    clearNextCell(v);
+    const initialPrev = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
+    const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
+    if (c && !c.removed) {
+      const home = buildingById(c.homeId);
+      if (home && home.entrance != null && road[home.entrance]) {
+        const path = findPath(v.currentIdx, home.entrance, true, { initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true });
+        if (path.length) {
+          v.type = 'ReturnHomeTrip';
+          v.destBuildingId = home.id;
+          v.targetGateId = null;
+          v.path = path;
+          v.pathPos = 0;
+          v.t = 0;
+          v.nextIdx = null;
+          v.deadline = game.worldMin + 720;
+          v.rerouted = true;
+          c.state = 'กำลังกลับบ้าน (ทางขาด/กลับรถปลายถนน)';
+          addAlert('กลับรถที่ปลายถนน', `Citizen ${c.id} เจอทางขาด จึงกลับรถจากปลายถนนและกลับบ้าน`, 1, 'warn');
+          return true;
+        }
+      }
+      c.satisfaction -= 4;
+    }
+    // รถผ่านเมืองหรือรถที่ไม่มีเจ้าของ ถ้าหลุดเส้นทางและไม่มีทางแก้ ให้ลบออกจาก simulation แทนการค้างถาวร
+    if (!c || v.type === 'PassThroughTrip') {
+      releaseCell(v.currentIdx, v.id);
+      clearNextCell(v);
+      const vi = vehicles.indexOf(v);
+      if (vi >= 0) vehicles.splice(vi, 1);
+      return true;
+    }
+    return false;
+  }
+
   function updateVehicles(realDt, gameMinDt) {
     for (let i = vehicles.length - 1; i >= 0; i--) {
       const v = vehicles[i];
@@ -1940,7 +2011,8 @@ canvas { touch-action: none; }
   function handleBlockedVehicle(v) {
     const dest = v.path[v.path.length - 1];
     clearNextCell(v);
-    const path = findPath(v.currentIdx, dest, true);
+    const initialPrev = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
+    const path = findPath(v.currentIdx, dest, true, { initialPrev });
     if (path.length) {
       v.path = path;
       v.pathPos = 0;
@@ -1949,6 +2021,7 @@ canvas { touch-action: none; }
       v.rerouted = true;
       return true;
     }
+    if (rerouteVehicleHomeOrExit(v, 'ถนนขาด')) return true;
     const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
     if (c && !c.removed && game.worldMin - (v.lastBlockedAlert || 0) > 60) {
       v.lastBlockedAlert = game.worldMin;
@@ -1962,11 +2035,25 @@ canvas { touch-action: none; }
   function moveVehicle(v, realDt, gameMinDt) {
     const rd = roadDataById(road[v.currentIdx]);
     if (rd) flowLoad[v.currentIdx] += realDt * 5;
+    // Drop-off node หน้าอาคาร: ถึงช่องถนนที่เชื่อมอาคารแล้วให้เข้าอาคารทันที ไม่ต้องพยายามกลับรถ/เปลี่ยนเลนหน้าอาคาร
+    if (isAtBuildingDropoff(v)) { arriveVehicle(v); return; }
     if (v.pathPos >= v.path.length - 1) { arriveVehicle(v); return; }
 
     if (v.nextIdx == null) {
       const ni = v.path[v.pathPos + 1];
       if (!road[ni]) { handleBlockedVehicle(v); return; }
+      const prevIdx = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
+      if (wouldUTurn(prevIdx, v.currentIdx, ni) && !canUTurnAtForVehicle(v, v.currentIdx, prevIdx)) {
+        waitLoad[v.currentIdx] += realDt * 4;
+        v.waitingGameMin += gameMinDt;
+        if (!v.uTurnBlockedAlerted || game.worldMin - v.uTurnBlockedAlerted > 60) {
+          v.uTurnBlockedAlerted = game.worldMin;
+          addAlert('กลับรถไม่ได้', 'รถจะกลับรถได้เฉพาะ 4 แยก หรือปลายถนนที่ขาด/ตันเท่านั้น', 1, 'warn');
+        }
+        tryReroute(v);
+        if (v.waitingGameMin > 12) rerouteVehicleHomeOrExit(v, 'กลับรถไม่ได้');
+        return;
+      }
       const dirKey = moveDirKey(v.currentIdx, ni);
       if (!canEnterCell(ni, v.id, dirKey)) {
         waitLoad[v.currentIdx] += realDt * 4;
@@ -2016,7 +2103,8 @@ canvas { touch-action: none; }
     if (v.rerouteCooldown && game.worldMin < v.rerouteCooldown) return;
     const dest = v.path[v.path.length - 1];
     clearNextCell(v);
-    const path = findPath(v.currentIdx, dest, true);
+    const initialPrev = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
+    const path = findPath(v.currentIdx, dest, true, { initialPrev });
     if (path.length && path.length < Math.max(2, v.path.length - v.pathPos + 6)) {
       v.path = path;
       v.pathPos = 0;
@@ -2637,6 +2725,39 @@ canvas { touch-action: none; }
   function isJunctionCell(i) {
     return road[i] && connCache[i] >= 3;
   }
+  function isFourWayJunctionCell(i) {
+    // อนุญาตกลับรถที่ 4 แยกจริง
+    return !!(road[i] && connCache[i] === 4);
+  }
+  function isRoadEndCell(i) {
+    // ถ้าทางขาดหรือสุดปลายถนน รถสามารถกลับรถที่ปลายถนนได้เพื่อไม่ให้ค้างบัค
+    return !!(road[i] && connCache[i] <= 1);
+  }
+  function canUTurnAt(i) {
+    return isFourWayJunctionCell(i) || isRoadEndCell(i);
+  }
+  function canUTurnAtForPath(cur, prev, opts = {}) {
+    if (canUTurnAt(cur)) return true;
+    // กรณีถนนถูกตัดจนเหลือทางย้อนกลับทางเดียว ให้กลับรถที่ปลายถนนใหม่ได้เพื่อกันรถค้าง
+    if (opts.allowDeadEndUTurn && prev != null) {
+      const choices = linkedNeighbors(cur).filter(n => n !== prev && road[n]);
+      if (choices.length === 0) return true;
+    }
+    return false;
+  }
+  function canUTurnAtForVehicle(v, cur, prev) {
+    if (canUTurnAt(cur)) return true;
+    if (prev != null) {
+      const choices = linkedNeighbors(cur).filter(n => n !== prev && road[n]);
+      if (choices.length === 0) return true;
+      const planned = v && v.path ? v.path[v.pathPos + 1] : null;
+      if (planned != null && !road[planned]) return true;
+    }
+    return false;
+  }
+  function wouldUTurn(prev, cur, next) {
+    return prev != null && next === prev;
+  }
   function signalPhase(i) {
     // Each junction has a deterministic offset so every red light does not switch at the exact same moment.
     const offset = (i * 7) % 11;
@@ -3192,7 +3313,7 @@ canvas { touch-action: none; }
         ${toolMetric('ผู้ใช้บริการ', `${b.visitors}/${t.service}${b.reservedService ? ` (+จอง ${b.reservedService})` : ''}`)}
         ${toolMetric('วันนี้', `ถึง ${b.arrivals} • ล่าช้า ${b.delayed || 0}`)}
       </div>
-      <div class="muted" style="margin-top:8px">Entrance: ${xy(b.entrance).x}, ${xy(b.entrance).y} • ต้องเข้าเลนฝั่งอาคาร (${b.entrySideKey || '-'}) • อาคารนี้ถูกใช้โดย Trip/Capacity จริง</div>`;
+      <div class="muted" style="margin-top:8px">Entrance: ${xy(b.entrance).x}, ${xy(b.entrance).y} • เข้าอาคารจากถนนที่เชื่อมอยู่ (${b.entrySideKey || '-'}) • ถ้าฝั่งหลักติดบัค ระบบจะใช้ทางเชื่อมที่ใกล้สุด • อาคารนี้ถูกใช้โดย Trip/Capacity จริง</div>`;
   }
   function inspectRoad(x, y) {
     const i = idx(x,y);
@@ -3274,6 +3395,30 @@ canvas { touch-action: none; }
     e.preventDefault();
     if (e.touches.length === 1) {
       const p = touchPoint(e.touches[0]);
+      const g = screenToGrid(p.x, p.y);
+      game.lastMouse = p;
+      game.hover = inBounds(g.x, g.y) ? g : null;
+      const tool = game.selectedTool;
+      if (tool && (tool.type === 'road' || tool.type === 'demolishRoad')) {
+        game.touchMode = 'buildLine';
+        game.touchLast = p;
+        game.touchBuildStart = game.hover;
+        game.touchBuildCurrent = game.hover;
+        game.roadStart = game.hover;
+        game.panMoved = false;
+        setStatus(tool.type === 'road' ? 'iPad: ลากนิ้วเพื่อวางถนน แล้วปล่อยนิ้วเพื่อสร้าง' : 'iPad: ลากนิ้วเพื่อเลือกรื้อถนน แล้วปล่อยนิ้วเพื่อรื้อ');
+        canvas.classList.add('dragging');
+        return;
+      }
+      if (tool && tool.type === 'building') {
+        game.touchMode = 'buildTap';
+        game.touchLast = p;
+        game.touchBuildStart = game.hover;
+        game.touchBuildCurrent = game.hover;
+        game.panMoved = false;
+        setStatus('iPad: แตะตำแหน่งบนแผนที่เพื่อวางอาคาร');
+        return;
+      }
       game.touchMode = 'pan';
       game.touchLast = p;
       game.panStart = p;
@@ -3287,6 +3432,8 @@ canvas { touch-action: none; }
       game.touchDist = touchDist(a, b);
       game.touchZoom = game.zoom;
       game.panMoved = true;
+      game.roadStart = null;
+      game.touchBuildStart = null;
       canvas.classList.add('dragging');
     }
   }, { passive:false });
@@ -3294,6 +3441,15 @@ canvas { touch-action: none; }
   canvas.addEventListener('touchmove', (e) => {
     if (!game.touchMode) return;
     e.preventDefault();
+    if ((game.touchMode === 'buildLine' || game.touchMode === 'buildTap') && e.touches.length === 1) {
+      const p = touchPoint(e.touches[0]);
+      game.touchLast = p;
+      game.lastMouse = p;
+      const g = screenToGrid(p.x, p.y);
+      game.hover = inBounds(g.x, g.y) ? g : null;
+      game.touchBuildCurrent = game.hover;
+      return;
+    }
     if (game.touchMode === 'pan' && e.touches.length === 1) {
       const p = touchPoint(e.touches[0]);
       const dx = p.x - game.touchLast.x;
@@ -3324,9 +3480,39 @@ canvas { touch-action: none; }
   canvas.addEventListener('touchend', (e) => {
     e.preventDefault();
     if (e.touches.length === 0) {
-      if (game.panMoved) game.suppressClickUntil = performance.now() + 350;
+      const mode = game.touchMode;
+      const tool = game.selectedTool;
+      if (mode === 'buildLine' && tool && game.touchBuildStart && game.touchBuildCurrent) {
+        const start = game.touchBuildStart;
+        const end = game.touchBuildCurrent;
+        const cells = getLineCells(start.x, start.y, end.x, end.y);
+        if (tool.type === 'road') {
+          const valid = canAddRoadCells(cells);
+          const cost = estimateRoadCost(cells, tool.key);
+          if (!valid.ok) setStatus(`สร้างไม่ได้: ${valid.reason}`);
+          else if (!canSpend(cost)) setStatus('สร้างไม่ได้: เงินไม่พอหรือกำลังติดลบ');
+          else { placeRoadCells(cells, tool.key, true); setStatus(`สร้าง/อัปเกรดถนน ${cells.length} ช่อง ราคา ${formatMoney(cost)} บาท`); }
+        } else if (tool.type === 'demolishRoad') {
+          let removed = 0;
+          for (const i of cells) { const p2 = xy(i); if (removeRoadCell(p2.x, p2.y, true)) removed++; }
+          setStatus(`รื้อถนน ${removed} ช่อง`);
+        }
+        updateToolButtons();
+        game.suppressClickUntil = performance.now() + 450;
+      } else if (mode === 'buildTap' && tool && tool.type === 'building' && game.touchBuildCurrent) {
+        const g = game.touchBuildCurrent;
+        const res = addBuilding(tool.key, g.x, g.y, true);
+        if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+        updateToolButtons();
+        game.suppressClickUntil = performance.now() + 450;
+      } else if (game.panMoved) {
+        game.suppressClickUntil = performance.now() + 350;
+      }
       game.touchMode = null;
       game.touchLast = null;
+      game.touchBuildStart = null;
+      game.touchBuildCurrent = null;
+      game.roadStart = null;
       game.panMoved = false;
       canvas.classList.remove('dragging');
     } else if (e.touches.length === 1) {
@@ -3334,6 +3520,8 @@ canvas { touch-action: none; }
       game.touchMode = 'pan';
       game.touchLast = p;
       game.panStart = p;
+      game.roadStart = null;
+      game.touchBuildStart = null;
     }
   }, { passive:false });
 

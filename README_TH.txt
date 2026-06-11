@@ -1,16 +1,24 @@
-Traffic Fixer Thailand - วิธีเปิดเล่น
+Traffic Fixer Thailand - GitHub Ready Package
 
-ไฟล์นี้เป็นเวอร์ชัน HTML ไฟล์เดียว (self-contained)
-จึงไม่มีโฟลเดอร์ src, css, js หรือ assets แยกออกมา
+วิธีเปิดเล่นบนคอม
+1) เปิดไฟล์ index.html ด้วย Chrome / Edge / Safari
 
-วิธีเล่นบนคอม:
-1. เปิดไฟล์ index.html ด้วย Chrome / Edge
+วิธีอัปขึ้น GitHub Pages
+1) แตกไฟล์ ZIP
+2) อัปไฟล์ทั้งหมดในโฟลเดอร์ traffic_fixer_thailand ไปที่ root ของ repository
+3) เข้า Settings > Pages
+4) เลือก Deploy from a branch
+5) เลือก branch main และ folder /root
+6) รอ GitHub สร้างลิงก์ แล้วเปิดเล่นได้จาก Safari/Chrome
 
-วิธีเล่นบน iPad:
-1. ใช้ไฟล์ traffic_fixer_thailand_entrylane_no_tripfail_money500k_singlefile.html
-2. ส่งเข้า iPad ผ่าน AirDrop / iCloud Drive / Google Drive
-3. เปิดด้วย Safari
-4. ถ้าต้องการทำเป็นไอคอน ให้กด Share > Add to Home Screen
+ไฟล์สำคัญ
+- index.html : ไฟล์เกมหลัก รวม CSS/JavaScript ในไฟล์เดียว
+- ipad_singlefile.html : ไฟล์เดี่ยวสำหรับส่งเข้า iPad หรือเปิดผ่าน Safari
+- .nojekyll : ช่วยให้ GitHub Pages เสิร์ฟไฟล์ตรง ๆ
 
-หมายเหตุ:
-ถ้าแตก ZIP แล้วเห็นไฟล์น้อย ไม่ได้แปลว่าไฟล์หาย เพราะระบบเกม, CSS และ JavaScript ถูกรวมไว้ใน HTML แล้ว
+หมายเหตุเวอร์ชันนี้
+- iPad ลากนิ้วเพื่อสร้างถนนได้เมื่อเลือกเครื่องมือถนน
+- มือเปล่าลากแผนที่ได้ และจีบ 2 นิ้วเพื่อซูมได้
+- รถเข้าอาคารที่ drop-off node หน้าอาคารแล้วถือว่าเข้าอาคารสำเร็จ ไม่ค้างหน้าอาคาร
+- รถกลับรถได้เฉพาะ 4 แยก และปลายถนน/ทางตันเมื่อถนนขาด
+- ถ้าถนนขาด รถจะพยายามกลับบ้านแทนการค้างถาวร
