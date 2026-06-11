@@ -578,9 +578,37 @@ body, #app, canvas {
 }
 #mapJoy .joy-up { grid-column: 2; grid-row: 1; }
 #mapJoy .joy-left { grid-column: 1; grid-row: 2; }
-#mapJoy .joy-mid { grid-column: 2; grid-row: 2; opacity: .55; font-size: 13px; }
+#mapJoy .joy-mid { grid-column: 2; grid-row: 2; opacity: .72; font-size: 13px; }
 #mapJoy .joy-right { grid-column: 3; grid-row: 2; }
 #mapJoy .joy-down { grid-column: 2; grid-row: 3; }
+#mapJoy.joy-collapsed {
+  grid-template-columns: 28px;
+  grid-template-rows: 28px;
+  gap: 0;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.72);
+}
+#mapJoy.joy-collapsed button[data-pan] {
+  display: none !important;
+}
+#mapJoy.joy-collapsed .joy-mid {
+  grid-column: 1;
+  grid-row: 1;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 999px;
+  opacity: .95;
+  font-size: 0;
+  background: rgba(255,255,255,.96);
+}
+#mapJoy.joy-collapsed .joy-mid::before {
+  content: "•";
+  font-size: 25px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
 @media (pointer: coarse), (max-width: 1180px) {
   #mapJoy { display: grid; }
 }
@@ -600,7 +628,7 @@ body, #app, canvas {
     <div id="mapJoy" aria-label="ปุ่มเลื่อนแผนที่">
       <button class="joy-up" data-pan="up" aria-label="เลื่อนขึ้น">▲</button>
       <button class="joy-left" data-pan="left" aria-label="เลื่อนซ้าย">◀</button>
-      <button class="joy-mid" aria-label="เลื่อนแผนที่" disabled>✥</button>
+      <button class="joy-mid" aria-label="ย่อปุ่มจอย" title="ย่อ/ขยายปุ่มจอย">✥</button>
       <button class="joy-right" data-pan="right" aria-label="เลื่อนขวา">▶</button>
       <button class="joy-down" data-pan="down" aria-label="เลื่อนลง">▼</button>
     </div>
@@ -612,7 +640,7 @@ body, #app, canvas {
         <span class="logo">🚦</span>
         <div>
           <strong>Traffic Fixer Thailand</strong>
-          <small>Playable Prototype v0.3 iPad Nav Fix</small>
+          <small>Playable Prototype v0.4 Joy Collapse</small>
         </div>
       </div>
       <div id="stats" class="stats"></div>
@@ -964,67 +992,232 @@ body, #app, canvas {
     const set = roadLinks.get(a);
     return !!(set && set.has(b) && road[a] && road[b]);
   }
-  function approachPredecessorForBuilding(b) {
-    if (!b || b.entrance == null || !b.entryDirKey) return null;
-    const { dx, dy } = parseDirKey(b.entryDirKey);
-    const p = xy(b.entrance);
-    const px = p.x - dx, py = p.y - dy;
-    if (!inBounds(px, py)) return null;
-    const pre = idx(px, py);
-    return hasRoadLink(pre, b.entrance) ? pre : null;
+  // ================================================================
+  // New traffic AI core: building access + lane-correct routing
+  // ================================================================
+  function dirKeyFromDelta(dx, dy) { return `${sign(dx)},${sign(dy)}`; }
+  function oppositeDirKey(dirKey) {
+    const d = parseDirKey(dirKey);
+    return `${-d.dx},${-d.dy}`;
   }
-  function allBuildingApproachPredecessors(b) {
-    if (!b || b.entrance == null) return [];
+  function idxStep(i, dirKey) {
+    const d = parseDirKey(dirKey);
+    const p = xy(i);
+    const nx = p.x + d.dx, ny = p.y + d.dy;
+    return inBounds(nx, ny) ? idx(nx, ny) : null;
+  }
+  function previousForApproach(entrance, entryDirKey) {
+    return idxStep(entrance, oppositeDirKey(entryDirKey));
+  }
+  function nextForExit(entrance, entryDirKey) {
+    return idxStep(entrance, entryDirKey);
+  }
+
+  function buildingAccessCandidatesFromRect(x, y, w, h) {
     const out = [];
-    const links = roadLinks.get(b.entrance);
-    if (links) {
-      for (const ni of links) if (road[ni] && hasRoadLink(ni, b.entrance)) out.push(ni);
+    const seen = new Set();
+    for (let yy = y - 1; yy <= y + h; yy++) for (let xx = x - 1; xx <= x + w; xx++) {
+      if (!inBounds(xx, yy)) continue;
+      const outside = xx < x || xx >= x + w || yy < y || yy >= y + h;
+      if (!outside) continue;
+      const entrance = idx(xx, yy);
+      if (!road[entrance] || seen.has(entrance)) continue;
+      seen.add(entrance);
+
+      const dxToBuilding = (x + w / 2 - 0.5) - xx;
+      const dyToBuilding = (y + h / 2 - 0.5) - yy;
+      let sideX = 0, sideY = 0;
+      if (Math.abs(dxToBuilding) >= Math.abs(dyToBuilding)) sideX = sign(dxToBuilding);
+      else sideY = sign(dyToBuilding);
+      if (!sideX && !sideY) sideY = 1;
+
+      // รถไทยขับชิดซ้าย: อาคารต้องอยู่ด้านซ้ายของทิศทางรถ
+      // left-normal ของทิศทาง (dx,dy) คือ (-dy, dx)
+      // จึงได้ entry direction = (sideY, -sideX)
+      const entryDirKey = `${sideY},${-sideX}`;
+      const entrySideKey = `${sideX},${sideY}`;
+      const approachPrev = previousForApproach(entrance, entryDirKey);
+      const exitNext = nextForExit(entrance, entryDirKey);
+      const entryOk = approachPrev != null && hasRoadLink(approachPrev, entrance);
+      const exitOk = exitNext != null && hasRoadLink(entrance, exitNext);
+      const centerScore = Math.abs(xx - (x + w / 2)) + Math.abs(yy - (y + h / 2));
+      const roadScore = roadDegree(entrance) >= 3 ? -0.4 : 0;
+      out.push({ entrance, entryDirKey, entrySideKey, approachPrev, exitNext, entryOk, exitOk, score: centerScore + roadScore });
     }
-    const preferred = approachPredecessorForBuilding(b);
-    if (preferred != null && out.includes(preferred)) {
-      out.splice(out.indexOf(preferred), 1);
-      out.unshift(preferred);
-    }
+    out.sort((a, b) => {
+      const ak = (a.entryOk ? 0 : 10) + (a.exitOk ? 0 : 2) + a.score;
+      const bk = (b.entryOk ? 0 : 10) + (b.exitOk ? 0 : 2) + b.score;
+      return ak - bk;
+    });
     return out;
   }
-  function exitSuccessorForBuilding(b) {
-    if (!b || b.entrance == null || !b.entryDirKey) return null;
-    const post = neighborByDir(b.entrance, b.entryDirKey);
-    return post != null && hasRoadLink(b.entrance, post) ? post : null;
+
+  function refreshBuildingAccess(b) {
+    if (!b) return false;
+    const candidates = buildingAccessCandidatesFromRect(b.x, b.y, b.w, b.h);
+    b.accessPoints = candidates;
+    if (!candidates.length) {
+      b.entrance = null;
+      b.entryDirKey = null;
+      b.entrySideKey = null;
+      return false;
+    }
+    const best = candidates[0];
+    b.entrance = best.entrance;
+    b.entryDirKey = best.entryDirKey;
+    b.entrySideKey = best.entrySideKey;
+    return true;
   }
+
+  function refreshAllBuildingAccesses() {
+    for (const b of buildings) refreshBuildingAccess(b);
+  }
+
+  function validAccessPointsForBuilding(b) {
+    if (!b) return [];
+    if (!b.accessPoints || !b.accessPoints.length) refreshBuildingAccess(b);
+    return (b.accessPoints || []).filter(a => a && a.entrance != null && road[a.entrance]);
+  }
+
+  function findAdjacentRoadForRect(x, y, w, h) {
+    const candidates = buildingAccessCandidatesFromRect(x, y, w, h);
+    return candidates.length ? candidates[0] : null;
+  }
+
+  function appendUniquePath(a, b) {
+    if (!a || !a.length) return b ? b.slice() : [];
+    if (!b || !b.length) return a.slice();
+    const out = a.slice();
+    const start = (out[out.length - 1] === b[0]) ? 1 : 0;
+    for (let i = start; i < b.length; i++) out.push(b[i]);
+    return out;
+  }
+
+  function scoreCandidatePath(path, access) {
+    if (!path || !path.length) return Infinity;
+    const turns = countPathTurns(path);
+    const legalBonus = access && access.entryOk ? -4 : 0;
+    const exitBonus = access && access.exitOk ? -1 : 0;
+    return path.length + turns * 0.65 + legalBonus + exitBonus + (access ? access.score * 0.05 : 0);
+  }
+
+  function countPathTurns(path) {
+    let turns = 0;
+    for (let i = 2; i < path.length; i++) {
+      const a = path[i - 2], b = path[i - 1], c = path[i];
+      if (moveDirKey(a, b) !== moveDirKey(b, c)) turns++;
+    }
+    return turns;
+  }
+
+  function pathToBuildingAccess(start, destB, opts = {}) {
+    const accesses = validAccessPointsForBuilding(destB);
+    if (!accesses.length) return [];
+    let bestPath = [];
+    let bestScore = Infinity;
+
+    // Strict lane mode: รถต้องมาจาก predecessor ที่ทำให้ตัวรถอยู่เลนฝั่งอาคารเท่านั้น
+    for (const access of accesses) {
+      if (!access.entryOk || access.approachPrev == null) continue;
+      let path;
+      if (start === access.entrance) {
+        // ถ้าอยู่หน้าอาคารอยู่แล้ว ให้ใช้ได้เฉพาะกรณีไม่มีทิศเข้ามาขัดกฎ
+        if (opts.initialPrev != null && opts.initialPrev >= 0 && opts.initialPrev !== access.approachPrev) continue;
+        path = [access.entrance];
+      } else {
+        const p = findPath(start, access.approachPrev, true, { ...opts, goalBias: access.entrance });
+        if (!p.length) continue;
+        const last = p[p.length - 1];
+        if (!hasRoadLink(last, access.entrance)) continue;
+        if (wouldUTurn(p.length > 1 ? p[p.length - 2] : opts.initialPrev, last, access.entrance) && !canUTurnAtForPath(last, p.length > 1 ? p[p.length - 2] : opts.initialPrev, opts)) continue;
+        path = p.concat([access.entrance]);
+      }
+      const score = scoreCandidatePath(path, access);
+      if (score < bestScore) { bestScore = score; bestPath = path; }
+    }
+
+    if (bestPath.length) return bestPath;
+
+    // Fallback แบบปลอดภัย: ถ้าอาคารวางริมถนนสั้นมากจนไม่มี predecessor ที่ถูกเลน ให้หาทางเข้าใกล้สุด
+    // แต่ยังไม่ยอมกลับรถกลางถนน
+    for (const access of accesses) {
+      const p = findPath(start, access.entrance, true, opts);
+      if (!p.length) continue;
+      const score = scoreCandidatePath(p, access) + 30;
+      if (score < bestScore) { bestScore = score; bestPath = p; }
+    }
+    return bestPath;
+  }
+
+  function pathFromBuildingAccess(fromB, goal, opts = {}) {
+    const accesses = validAccessPointsForBuilding(fromB);
+    if (!accesses.length) return [];
+    let bestPath = [];
+    let bestScore = Infinity;
+
+    // รถออกจากอาคารต้องออกไปตามเลนเดียวกับทิศเข้าอาคาร ไม่ถอยย้อนเลนสวน
+    for (const access of accesses) {
+      if (!access.exitOk || access.exitNext == null) continue;
+      const p = findPath(access.exitNext, goal, true, { ...opts, initialPrev: access.entrance });
+      if (!p.length) continue;
+      const path = [access.entrance].concat(p);
+      const score = scoreCandidatePath(path, access);
+      if (score < bestScore) { bestScore = score; bestPath = path; }
+    }
+
+    if (bestPath.length) return bestPath;
+
+    // Fallback สำหรับปลายถนน/อาคารที่ติดถนนด้านเดียว: ให้เริ่มจาก entrance แต่ยังคุมกฎกลับรถใน findPath
+    for (const access of accesses) {
+      const p = findPath(access.entrance, goal, true, { ...opts, initialPrev: -1 });
+      if (!p.length) continue;
+      const score = scoreCandidatePath(p, access) + 20;
+      if (score < bestScore) { bestScore = score; bestPath = p; }
+    }
+    return bestPath;
+  }
+
   function constrainedPathForTrip(opts) {
     if (opts.prePath) return opts.prePath;
     let start = opts.fromIdx;
     let goal = opts.toIdx;
-    let prefix = [];
-    let appendGoal = false;
+    if (start == null || goal == null || !road[start] || !road[goal]) return [];
+
+    const baseOpts = {
+      initialPrev: Number.isInteger(opts.initialPrev) ? opts.initialPrev : -1,
+      allowDeadEndUTurn: !!opts.allowDeadEndUTurn,
+      enforceNoUTurn: opts.enforceNoUTurn !== false,
+      trafficAware: opts.trafficAware === true
+    };
+
     const fromB = opts.fromBuildingId ? buildingById(opts.fromBuildingId) : null;
-    if (fromB && fromB.entrance === start && fromB.entryDirKey) {
-      const post = exitSuccessorForBuilding(fromB);
-      if (post != null && post !== start) { prefix = [start]; start = post; }
-    }
     const destB = opts.destBuildingId ? buildingById(opts.destBuildingId) : null;
-    if (destB && destB.entrance === goal) {
-      // อาคารใช้ entrance บนถนนเป็น drop-off node: รถถึงช่องถนนที่ติดอาคารแล้วถือว่าเข้าอาคารสำเร็จ
-      // ไม่บังคับให้ต้องวน/กลับรถเพื่อเข้าจากทิศเดียว เพราะบน iPad และถนนปลายตันทำให้รถค้างหน้าอาคารได้ง่าย
-      const direct = findPath(start, goal, true, { allowDeadEndUTurn: true });
-      if (direct.length) return prefix.length ? prefix.concat(direct) : direct;
-      const candidates = allBuildingApproachPredecessors(destB);
-      for (const pre of candidates) {
-        const midTry = findPath(start, pre, true, { allowDeadEndUTurn: true });
-        if (midTry.length) {
-          const path = prefix.length ? prefix.concat(midTry) : midTry;
-          if (path[path.length - 1] !== opts.toIdx && hasRoadLink(path[path.length - 1], opts.toIdx)) path.push(opts.toIdx);
-          return path;
-        }
+
+    if (fromB && destB) {
+      const exits = validAccessPointsForBuilding(fromB).filter(a => a.exitOk && a.exitNext != null);
+      let bestPath = [];
+      let bestScore = Infinity;
+      for (const access of exits.length ? exits : validAccessPointsForBuilding(fromB)) {
+        const startNode = access.exitOk && access.exitNext != null ? access.exitNext : access.entrance;
+        const prefix = access.exitOk && access.exitNext != null ? [access.entrance] : [];
+        const p = pathToBuildingAccess(startNode, destB, { ...baseOpts, initialPrev: access.entrance });
+        if (!p.length) continue;
+        const full = appendUniquePath(prefix.length ? prefix : [access.entrance], p);
+        const score = scoreCandidatePath(full, access);
+        if (score < bestScore) { bestScore = score; bestPath = full; }
       }
-      appendGoal = false;
+      return bestPath;
     }
-    const mid = findPath(start, goal, false, { allowDeadEndUTurn: true });
-    if (!mid.length) return [];
-    let path = prefix.length ? prefix.concat(mid) : mid;
-    if (appendGoal && path[path.length - 1] !== opts.toIdx) path.push(opts.toIdx);
-    return path;
+
+    if (fromB) {
+      return pathFromBuildingAccess(fromB, goal, baseOpts);
+    }
+
+    if (destB) {
+      return pathToBuildingAccess(start, destB, baseOpts);
+    }
+
+    return findPath(start, goal, false, baseOpts);
   }
   function laneBucketMap(i, create = false) {
     let buckets = laneMap.get(i);
@@ -1337,6 +1530,7 @@ body, #app, canvas {
     pathCache.clear();
     roadVersion++;
     updateGateEntrances();
+    refreshAllBuildingAccesses();
     return true;
   }
 
@@ -1355,6 +1549,7 @@ body, #app, canvas {
     pathCache.clear();
     roadVersion++;
     updateGateEntrances();
+    refreshAllBuildingAccesses();
     return true;
   }
 
@@ -1396,6 +1591,7 @@ body, #app, canvas {
       entrance: check.entrance,
       entryDirKey: check.entryDirKey,
       entrySideKey: check.entrySideKey,
+      accessPoints: check.accessPoints || [],
       builtAt: game.worldMin,
       arrivals: 0, fails: 0, delayed: 0
     };
@@ -1418,34 +1614,9 @@ body, #app, canvas {
     }
     const access = findAdjacentRoadForRect(x, y, t.w, t.h);
     if (!access) return { ok:false, reason:'อาคารต้องติดถนนและมีทางเข้าออก' };
-    return { ok:true, entrance: access.entrance, entryDirKey: access.entryDirKey, entrySideKey: access.entrySideKey };
+    return { ok:true, entrance: access.entrance, entryDirKey: access.entryDirKey, entrySideKey: access.entrySideKey, accessPoints: buildingAccessCandidatesFromRect(x, y, t.w, t.h) };
   }
 
-  function findAdjacentRoadForRect(x, y, w, h) {
-    let best = null;
-    let bestScore = Infinity;
-    for (let yy = y - 1; yy <= y + h; yy++) for (let xx = x - 1; xx <= x + w; xx++) {
-      if (!inBounds(xx, yy)) continue;
-      const outside = xx < x || xx >= x + w || yy < y || yy >= y + h;
-      if (!outside) continue;
-      const i = idx(xx, yy);
-      if (road[i]) {
-        const dxToBuilding = (x + w / 2 - 0.5) - xx;
-        const dyToBuilding = (y + h / 2 - 0.5) - yy;
-        let sideX = 0, sideY = 0;
-        if (Math.abs(dxToBuilding) >= Math.abs(dyToBuilding)) sideX = sign(dxToBuilding);
-        else sideY = sign(dyToBuilding);
-        if (!sideX && !sideY) sideY = 1;
-        // รถไทยขับชิดซ้าย: อาคารจะรับรถจากเลนฝั่งที่ติดอาคารเท่านั้น
-        // left-normal ของทิศทางวิ่ง (dx,dy) คือ (-dy,dx) จึงย้อนกลับเป็น dir=(sideY,-sideX)
-        const entryDirKey = `${sideY},${-sideX}`;
-        const entrySideKey = `${sideX},${sideY}`;
-        const score = Math.abs(xx - (x + w / 2)) + Math.abs(yy - (y + h / 2));
-        if (score < bestScore) { bestScore = score; best = { entrance: i, entryDirKey, entrySideKey }; }
-      }
-    }
-    return best;
-  }
 
   function buildingType(b) { return DATA.buildings[b.typeKey]; }
   function buildingById(id) { return buildings.find(b => b.id === id); }
@@ -2011,15 +2182,9 @@ body, #app, canvas {
         const dx = nx - cx, dy = ny - cy;
         const step = (dx && dy) ? 1.414 : 1;
         const rd = roadDataById(road[ni]) || DATA.roads.small;
-        const ratio = trafficAware ? getRoadRatio(ni) : 0;
-        const trafficPenalty = Math.max(0, ratio - 0.35) * 2.15;
-        const junctionPenalty = roadDegree(ni) >= 3 ? 0.16 : 0;
-        const turnPenalty = pathTurnPenalty(state.prev, state.cur, ni);
         const tentative = (gMap.get(state.key) || 0)
-          + step * (5 / rd.speed)
-          + trafficPenalty
-          + junctionPenalty
-          + turnPenalty;
+          + roadTravelCost(ni, step, trafficAware)
+          + pathTurnPenalty(state.prev, state.cur, ni);
 
         if (tentative < (gMap.get(nk) ?? Infinity)) {
           gMap.set(nk, tentative);
@@ -2050,11 +2215,21 @@ body, #app, canvas {
     const ax = a % MAP_W, ay = Math.floor(a / MAP_W);
     const bx = b % MAP_W, by = Math.floor(b / MAP_W);
     // Chebyshev เหมาะกับถนนที่ลากได้ทั้ง 90° และ 45° ช่วยให้ A* เลือกเส้นทางนิ่งกว่า Manhattan
-    return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) * 0.72;
+    return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) * 0.82;
   }
 
   function roadDegree(i) {
     return road[i] ? linkedNeighbors(i).length : 0;
+  }
+
+  function roadTravelCost(i, step, trafficAware = false) {
+    const rd = roadDataById(road[i]) || DATA.roads.small;
+    // ระยะทางจริงมาก่อนเสมอ: ป้องกัน AI วิ่งอ้อมไปหาแต่ถนนใหญ่
+    // ถนนใหญ่ยังได้เปรียบเล็กน้อย แต่ไม่ถึงขั้นยอมอ้อมครึ่งเมือง
+    const laneFactor = rd.lanes >= 8 ? 0.86 : rd.lanes >= 4 ? 0.93 : 1.0;
+    const trafficPenalty = trafficAware ? Math.max(0, getRoadRatio(i) - 0.75) * 0.55 : 0;
+    const junctionPenalty = roadDegree(i) >= 3 ? 0.05 : 0;
+    return step * laneFactor + trafficPenalty + junctionPenalty;
   }
 
   function pathTurnPenalty(prev, cur, next) {
@@ -2062,10 +2237,10 @@ body, #app, canvas {
     const a = xy(prev), b = xy(cur), c = xy(next);
     const dx1 = sign(b.x - a.x), dy1 = sign(b.y - a.y);
     const dx2 = sign(c.x - b.x), dy2 = sign(c.y - b.y);
-    if (dx1 === -dx2 && dy1 === -dy2) return 2.2; // U-turn ถูกกฎหมายก็ยังควรเป็นทางเลือกสุดท้าย
+    if (dx1 === -dx2 && dy1 === -dy2) return 6.0; // U-turn ถูกกฎหมายก็ยังเป็นตัวเลือกสุดท้ายจริง ๆ
     if (dx1 === dx2 && dy1 === dy2) return 0;
     const dot = dx1 * dx2 + dy1 * dy2;
-    return dot <= 0 ? 0.34 : 0.12;
+    return dot <= 0 ? 0.22 : 0.08;
   }
 
   function samePathFromCurrent(v, path) {
@@ -2094,11 +2269,42 @@ body, #app, canvas {
     return v && v.pathPos > 0 ? v.path[v.pathPos - 1] : -1;
   }
 
+  function pathForVehicleCurrentDestination(v) {
+    const initialPrev = currentLegalInitialPrev(v);
+    if (v.destBuildingId) {
+      const b = buildingById(v.destBuildingId);
+      if (b && b.entrance != null && road[b.entrance]) {
+        return constrainedPathForTrip({
+          fromIdx: v.currentIdx,
+          toIdx: b.entrance,
+          destBuildingId: b.id,
+          initialPrev,
+          allowDeadEndUTurn: true,
+          trafficAware: false
+        });
+      }
+    }
+    if (v.targetGateId) {
+      const g = gates.find(x => x.id === v.targetGateId);
+      if (g && g.entrance != null && road[g.entrance]) {
+        return findPath(v.currentIdx, g.entrance, true, { initialPrev, allowDeadEndUTurn: true, trafficAware: false });
+      }
+    }
+    const dest = v.path && v.path.length ? v.path[v.path.length - 1] : null;
+    if (dest != null && road[dest]) return findPath(v.currentIdx, dest, true, { initialPrev, allowDeadEndUTurn: true, trafficAware: false });
+    return [];
+  }
+
   function isAtBuildingDropoff(v) {
     if (!v || !v.destBuildingId) return false;
     const b = buildingById(v.destBuildingId);
-    if (!b || b.entrance == null) return false;
-    return v.currentIdx === b.entrance;
+    if (!b || b.entrance == null || v.currentIdx !== b.entrance) return false;
+    const accesses = validAccessPointsForBuilding(b).filter(a => a.entrance === v.currentIdx);
+    if (!accesses.length) return true;
+    const prev = v.pathPos > 0 ? v.path[v.pathPos - 1] : currentLegalInitialPrev(v);
+    // ถ้ารถไม่มี prev แปลว่าเกิดบนหน้าอาคาร/เคสย้ายเข้าใกล้มาก ให้ปล่อยเข้าได้
+    if (prev == null || prev < 0) return true;
+    return accesses.some(a => a.entryOk && a.approachPrev === prev) || accesses.every(a => !a.entryOk);
   }
 
   function rerouteVehicleHomeOrExit(v, reason = 'ทางขาด') {
@@ -2110,10 +2316,10 @@ body, #app, canvas {
       const home = buildingById(c.homeId);
       if (home && home.entrance != null && road[home.entrance]) {
         // ใช้กฎกลับรถจริงก่อนเสมอ: กลับได้ที่ 4 แยก/ปลายถนนเท่านั้น ไม่ปล่อยให้กลับรถกลางถนนจน AI ดูมั่ว
-        let path = findPath(v.currentIdx, home.entrance, true, { initialPrev, allowDeadEndUTurn: true });
+        let path = constrainedPathForTrip({ fromIdx: v.currentIdx, toIdx: home.entrance, destBuildingId: home.id, initialPrev, allowDeadEndUTurn: true, trafficAware: false });
         // fallback เฉพาะเคสติดปลายถนนจริง ๆ เพื่อกันรถค้างถาวรหลังผู้เล่นตัดถนน
         if (!path.length && canUTurnAtForVehicle(v, v.currentIdx, initialPrev)) {
-          path = findPath(v.currentIdx, home.entrance, true, { initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true });
+          path = constrainedPathForTrip({ fromIdx: v.currentIdx, toIdx: home.entrance, destBuildingId: home.id, initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true, trafficAware: false });
         }
         if (path.length) {
           v.type = 'ReturnHomeTrip';
@@ -2162,10 +2368,8 @@ body, #app, canvas {
   }
 
   function handleBlockedVehicle(v) {
-    const dest = v.path[v.path.length - 1];
     clearNextCell(v);
-    const initialPrev = currentLegalInitialPrev(v);
-    const path = findPath(v.currentIdx, dest, true, { initialPrev, allowDeadEndUTurn: true });
+    const path = pathForVehicleCurrentDestination(v);
     if (path.length) {
       return applyVehiclePath(v, path, 'เส้นทางเดิมขาด');
     }
@@ -2247,14 +2451,13 @@ body, #app, canvas {
 
   function tryReroute(v, force = false) {
     if (!force && v.rerouteCooldown && game.worldMin < v.rerouteCooldown) return false;
-    const dest = v.path[v.path.length - 1];
     clearNextCell(v);
     const initialPrev = currentLegalInitialPrev(v);
     const oldRemaining = Math.max(1, v.path.length - v.pathPos);
     const oldNext = v.path[v.pathPos + 1];
     const oldNextBlocked = oldNext != null && !road[oldNext];
     const oldNextIllegalUTurn = oldNext != null && wouldUTurn(initialPrev, v.currentIdx, oldNext) && !canUTurnAtForVehicle(v, v.currentIdx, initialPrev);
-    const path = findPath(v.currentIdx, dest, true, { initialPrev, allowDeadEndUTurn: true });
+    const path = pathForVehicleCurrentDestination(v);
     if (!path.length || samePathFromCurrent(v, path)) return false;
 
     // ถ้าเส้นทางเดิมตัน/ต้องกลับรถผิดจุด ให้รับเส้นทางใหม่ทันที แม้จะยาวกว่าเล็กน้อย
@@ -3464,7 +3667,7 @@ body, #app, canvas {
         ${toolMetric('ผู้ใช้บริการ', `${b.visitors}/${t.service}${b.reservedService ? ` (+จอง ${b.reservedService})` : ''}`)}
         ${toolMetric('วันนี้', `ถึง ${b.arrivals} • ล่าช้า ${b.delayed || 0}`)}
       </div>
-      <div class="muted" style="margin-top:8px">Entrance: ${xy(b.entrance).x}, ${xy(b.entrance).y} • เข้าอาคารจากถนนที่เชื่อมอยู่ (${b.entrySideKey || '-'}) • ถ้าฝั่งหลักติดบัค ระบบจะใช้ทางเชื่อมที่ใกล้สุด • อาคารนี้ถูกใช้โดย Trip/Capacity จริง</div>`;
+      <div class="muted" style="margin-top:8px">Entrance: ${b.entrance != null ? `${xy(b.entrance).x}, ${xy(b.entrance).y}` : '-'} • Access ${validAccessPointsForBuilding(b).length} จุด • เข้าตามเลนซ้ายมือจริง (${b.entrySideKey || '-'}) • ระบบไม่ให้รถตัดเลนสวนเข้าอาคารแล้ว</div>`;
   }
   function inspectRoad(x, y) {
     const i = idx(x,y);
@@ -3818,22 +4021,57 @@ body, #app, canvas {
   }
   const mapJoy = document.getElementById('mapJoy');
   let joyTimer = null;
+  let joyCollapsed = false;
   function stopJoyPan() {
     if (joyTimer) clearInterval(joyTimer);
     joyTimer = null;
+  }
+  function setJoyCollapsed(collapsed) {
+    if (!mapJoy) return;
+    joyCollapsed = !!collapsed;
+    stopJoyPan();
+    mapJoy.classList.toggle('joy-collapsed', joyCollapsed);
+    const mid = mapJoy.querySelector('.joy-mid');
+    if (mid) {
+      mid.textContent = joyCollapsed ? '•' : '✥';
+      mid.setAttribute('aria-label', joyCollapsed ? 'ขยายปุ่มจอย' : 'ย่อปุ่มจอย');
+      mid.setAttribute('title', joyCollapsed ? 'ขยายปุ่มจอย' : 'ย่อปุ่มจอย');
+    }
+    setStatus(joyCollapsed ? 'ย่อปุ่มจอยแล้ว • กดจุดกลางเพื่อเปิดอีกครั้ง' : 'เปิดปุ่มจอยแล้ว • กดปุ่มกลางเพื่อย่อ');
+  }
+  function toggleJoyCollapsed(e) {
+    if (e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+    }
+    const now = performance.now();
+    if (mapJoy && mapJoy._lastToggle && now - mapJoy._lastToggle < 260) return;
+    if (mapJoy) mapJoy._lastToggle = now;
+    setJoyCollapsed(!joyCollapsed);
   }
   function startJoyPan(dir, e) {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
+    if (joyCollapsed) return;
     stopJoyPan();
     panMap(dir, 50);
     joyTimer = setInterval(() => panMap(dir, 34), 45);
-    setStatus('ใช้ปุ่มจอยเลื่อนแมปได้ • 1 นิ้วสร้าง/แตะ • 2 นิ้วลาก/ซูม');
+    setStatus('ใช้ปุ่มจอยเลื่อนแมปได้ • กดปุ่มกลางเพื่อย่อจอย • 1 นิ้วสร้าง/แตะ');
   }
   if (mapJoy) {
     mapJoy.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive:false });
+    const joyMid = mapJoy.querySelector('.joy-mid');
+    if (joyMid) {
+      joyMid.disabled = false;
+      if (window.PointerEvent) joyMid.addEventListener('pointerdown', toggleJoyCollapsed);
+      else {
+        joyMid.addEventListener('touchstart', toggleJoyCollapsed, { passive:false });
+        joyMid.addEventListener('mousedown', toggleJoyCollapsed);
+      }
+      joyMid.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+    }
     mapJoy.querySelectorAll('button[data-pan]').forEach(btn => {
       const dir = btn.dataset.pan;
       if (window.PointerEvent) btn.addEventListener('pointerdown', (e) => startJoyPan(dir, e));
