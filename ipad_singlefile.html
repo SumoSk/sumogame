@@ -527,11 +527,84 @@ canvas { touch-action: none; }
   }
 }
 
+
+
+/* iPad Safari navigation lock + small map joystick */
+html, body {
+  position: fixed;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  width: 100%;
+  height: 100%;
+}
+body, #app, canvas {
+  touch-action: none !important;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#mapJoy {
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(max(8px, env(safe-area-inset-bottom)) + 58px);
+  transform: translateX(-50%);
+  display: none;
+  grid-template-columns: 34px 34px 34px;
+  grid-template-rows: 34px 34px 34px;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 18px;
+  background: rgba(255,255,255,.78);
+  border: 1px solid rgba(15,23,42,.12);
+  pointer-events: auto;
+  touch-action: none !important;
+}
+#mapJoy button {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  padding: 0 !important;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 950;
+  background: rgba(255,255,255,.96);
+  border: 1px solid rgba(15,23,42,.16);
+  touch-action: none !important;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#mapJoy .joy-up { grid-column: 2; grid-row: 1; }
+#mapJoy .joy-left { grid-column: 1; grid-row: 2; }
+#mapJoy .joy-mid { grid-column: 2; grid-row: 2; opacity: .55; font-size: 13px; }
+#mapJoy .joy-right { grid-column: 3; grid-row: 2; }
+#mapJoy .joy-down { grid-column: 2; grid-row: 3; }
+@media (pointer: coarse), (max-width: 1180px) {
+  #mapJoy { display: grid; }
+}
+@media (pointer: coarse) and (max-width: 680px) {
+  #mapJoy {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 52px);
+    transform: translateX(-50%) scale(.92);
+  }
+}
+
 </style>
 </head>
 <body>
   <div id="app">
     <canvas id="game"></canvas>
+
+    <div id="mapJoy" aria-label="ปุ่มเลื่อนแผนที่">
+      <button class="joy-up" data-pan="up" aria-label="เลื่อนขึ้น">▲</button>
+      <button class="joy-left" data-pan="left" aria-label="เลื่อนซ้าย">◀</button>
+      <button class="joy-mid" aria-label="เลื่อนแผนที่" disabled>✥</button>
+      <button class="joy-right" data-pan="right" aria-label="เลื่อนขวา">▶</button>
+      <button class="joy-down" data-pan="down" aria-label="เลื่อนลง">▼</button>
+    </div>
+
 
     <header id="topbar">
       <button class="collapse-btn" data-collapse-target="topbar" aria-label="ย่อ/ขยายแถบบน">−</button>
@@ -539,7 +612,7 @@ canvas { touch-action: none; }
         <span class="logo">🚦</span>
         <div>
           <strong>Traffic Fixer Thailand</strong>
-          <small>Playable Prototype v0.2 AI Path Fix</small>
+          <small>Playable Prototype v0.3 iPad Nav Fix</small>
         </div>
       </div>
       <div id="stats" class="stats"></div>
@@ -3689,11 +3762,30 @@ canvas { touch-action: none; }
     const btn = el.querySelector(':scope > .collapse-btn');
     if (btn) btn.textContent = collapsed ? '+' : '−';
   }
-  document.querySelectorAll('.collapse-btn').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
+  function handleCollapseButton(btn, e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    btn._lastCollapseToggle = performance.now();
     const el = document.getElementById(btn.dataset.collapseTarget);
     setPanelCollapsed(el, !el.classList.contains('collapsed'));
-  }));
+  }
+  document.querySelectorAll('.collapse-btn').forEach(btn => {
+    if (window.PointerEvent) {
+      btn.addEventListener('pointerup', (e) => handleCollapseButton(btn, e));
+    } else {
+      btn.addEventListener('touchend', (e) => handleCollapseButton(btn, e), { passive:false });
+    }
+    btn.addEventListener('click', (e) => {
+      if (btn._lastCollapseToggle && performance.now() - btn._lastCollapseToggle < 450) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      handleCollapseButton(btn, e);
+    });
+  });
   const coarseUi = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   const iPadLike = /iPad|iPhone|Android/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -3701,6 +3793,59 @@ canvas { touch-action: none; }
   if (coarseUi || iPadLike || touchDevice) {
     setPanelCollapsed(document.getElementById('leftPanel'), true);
     setPanelCollapsed(document.getElementById('rightPanel'), true);
+  }
+
+
+
+  // iPad Safari sometimes scrolls/zooms the page before canvas receives a 2-finger move.
+  // Lock browser-level gestures on the game surface; panels/buttons still receive their own taps.
+  function preventBrowserPanZoom(e) {
+    const target = e.target;
+    if (target && target.closest && target.closest('.panel')) return;
+    if (e.cancelable) e.preventDefault();
+  }
+  ['gesturestart','gesturechange','gestureend'].forEach(type => {
+    document.addEventListener(type, preventBrowserPanZoom, { passive:false });
+  });
+  document.addEventListener('touchmove', preventBrowserPanZoom, { passive:false });
+
+  function panMap(dir, amount = 42) {
+    // Same camera behavior as keyboard arrows: pressing left shows more left-side map.
+    if (dir === 'left') game.pan.x += amount;
+    else if (dir === 'right') game.pan.x -= amount;
+    else if (dir === 'up') game.pan.y += amount;
+    else if (dir === 'down') game.pan.y -= amount;
+  }
+  const mapJoy = document.getElementById('mapJoy');
+  let joyTimer = null;
+  function stopJoyPan() {
+    if (joyTimer) clearInterval(joyTimer);
+    joyTimer = null;
+  }
+  function startJoyPan(dir, e) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    stopJoyPan();
+    panMap(dir, 50);
+    joyTimer = setInterval(() => panMap(dir, 34), 45);
+    setStatus('ใช้ปุ่มจอยเลื่อนแมปได้ • 1 นิ้วสร้าง/แตะ • 2 นิ้วลาก/ซูม');
+  }
+  if (mapJoy) {
+    mapJoy.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive:false });
+    mapJoy.querySelectorAll('button[data-pan]').forEach(btn => {
+      const dir = btn.dataset.pan;
+      if (window.PointerEvent) btn.addEventListener('pointerdown', (e) => startJoyPan(dir, e));
+      else {
+        btn.addEventListener('touchstart', (e) => startJoyPan(dir, e), { passive:false });
+        btn.addEventListener('mousedown', (e) => startJoyPan(dir, e));
+      }
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+    });
+    ['pointerup','pointercancel','mouseup','mouseleave','touchend','touchcancel','blur'].forEach(type => {
+      window.addEventListener(type, stopJoyPan, { passive:false });
+    });
   }
 
   document.querySelectorAll('.speedBtn').forEach(btn => btn.addEventListener('click', () => {
