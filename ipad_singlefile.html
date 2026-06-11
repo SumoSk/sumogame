@@ -529,7 +529,7 @@ canvas { touch-action: none; }
 
 
 
-/* iPad Safari navigation lock + small map joystick */
+/* iPad Safari navigation lock: no floating joystick. */
 html, body {
   position: fixed;
   overflow: hidden !important;
@@ -543,95 +543,12 @@ body, #app, canvas {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
-#mapJoy {
-  position: absolute;
-  z-index: 20;
-  left: 50%;
-  bottom: calc(max(8px, env(safe-area-inset-bottom)) + 58px);
-  transform: translateX(-50%);
-  display: none;
-  grid-template-columns: 34px 34px 34px;
-  grid-template-rows: 34px 34px 34px;
-  gap: 3px;
-  padding: 5px;
-  border-radius: 18px;
-  background: rgba(255,255,255,.78);
-  border: 1px solid rgba(15,23,42,.12);
-  pointer-events: auto;
-  touch-action: none !important;
-}
-#mapJoy button {
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  padding: 0 !important;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  font-weight: 950;
-  background: rgba(255,255,255,.96);
-  border: 1px solid rgba(15,23,42,.16);
-  touch-action: none !important;
-  -webkit-user-select: none;
-  user-select: none;
-}
-#mapJoy .joy-up { grid-column: 2; grid-row: 1; }
-#mapJoy .joy-left { grid-column: 1; grid-row: 2; }
-#mapJoy .joy-mid { grid-column: 2; grid-row: 2; opacity: .72; font-size: 13px; }
-#mapJoy .joy-right { grid-column: 3; grid-row: 2; }
-#mapJoy .joy-down { grid-column: 2; grid-row: 3; }
-#mapJoy.joy-collapsed {
-  grid-template-columns: 28px;
-  grid-template-rows: 28px;
-  gap: 0;
-  padding: 4px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.72);
-}
-#mapJoy.joy-collapsed button[data-pan] {
-  display: none !important;
-}
-#mapJoy.joy-collapsed .joy-mid {
-  grid-column: 1;
-  grid-row: 1;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  border-radius: 999px;
-  opacity: .95;
-  font-size: 0;
-  background: rgba(255,255,255,.96);
-}
-#mapJoy.joy-collapsed .joy-mid::before {
-  content: "•";
-  font-size: 25px;
-  line-height: 1;
-  transform: translateY(-1px);
-}
-@media (pointer: coarse), (max-width: 1180px) {
-  #mapJoy { display: grid; }
-}
-@media (pointer: coarse) and (max-width: 680px) {
-  #mapJoy {
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 52px);
-    transform: translateX(-50%) scale(.92);
-  }
-}
 
 </style>
 </head>
 <body>
   <div id="app">
     <canvas id="game"></canvas>
-
-    <div id="mapJoy" aria-label="ปุ่มเลื่อนแผนที่">
-      <button class="joy-up" data-pan="up" aria-label="เลื่อนขึ้น">▲</button>
-      <button class="joy-left" data-pan="left" aria-label="เลื่อนซ้าย">◀</button>
-      <button class="joy-mid" aria-label="ย่อปุ่มจอย" title="ย่อ/ขยายปุ่มจอย">✥</button>
-      <button class="joy-right" data-pan="right" aria-label="เลื่อนขวา">▶</button>
-      <button class="joy-down" data-pan="down" aria-label="เลื่อนลง">▼</button>
-    </div>
 
 
     <header id="topbar">
@@ -3467,6 +3384,53 @@ body, #app, canvas {
     return cost;
   }
 
+
+  function askBuildConfirm(title, lines) {
+    const msg = [`ยืนยัน${title}`, '', ...lines.filter(Boolean), '', 'กด OK เพื่อยืนยัน', 'กด Cancel เพื่อยกเลิก'].join('\n');
+    return window.confirm(msg);
+  }
+  function confirmRoadBuild(cells, roadKey, cost) {
+    const rd = DATA.roads[roadKey];
+    return askBuildConfirm('สร้าง/อัปเกรดถนน', [
+      `ประเภท: ${rd.name}`,
+      `จำนวน: ${cells.length} ช่อง`,
+      `ราคา: ${formatMoney(cost)} บาท`
+    ]);
+  }
+  function confirmRoadDemolish(cells) {
+    let roadCount = 0;
+    let fee = 0;
+    for (const i of cells) {
+      const rd = roadDataById(road[i]);
+      if (rd) { roadCount++; fee += rd.cost * 0.2; }
+    }
+    if (!roadCount) {
+      setStatus('ไม่มีถนนในช่วงที่เลือก');
+      return false;
+    }
+    return askBuildConfirm('รื้อถนน', [
+      `จำนวนถนนที่เลือก: ${roadCount} ช่อง`,
+      `ค่ารื้อประมาณ: ${formatMoney(fee)} บาท`,
+      'หมายเหตุ: ช่องที่มีรถอยู่จะรื้อไม่ได้'
+    ]);
+  }
+  function confirmBuildingBuild(typeKey, x, y) {
+    const t = DATA.buildings[typeKey];
+    return askBuildConfirm('วางอาคาร', [
+      `อาคาร: ${t.name}`,
+      `ขนาด: ${t.w}x${t.h} ช่อง`,
+      `ราคา: ${formatMoney(t.cost)} บาท`,
+      `ตำแหน่ง: X${x}, Y${y}`
+    ]);
+  }
+  function confirmResetCity(nextCityKey) {
+    const city = DATA.cities[nextCityKey];
+    return askBuildConfirm('เริ่มเมืองใหม่', [
+      `เมือง: ${city ? city.name : nextCityKey}`,
+      'ข้อมูลเมืองปัจจุบันจะถูกล้างทั้งหมด'
+    ]);
+  }
+
   function toolIcon(type, key) {
     if (type === 'hand') return '👆';
     if (type === 'demolishRoad') return '🧹';
@@ -3849,18 +3813,27 @@ body, #app, canvas {
           const cost = estimateRoadCost(cells, tool.key);
           if (!valid.ok) setStatus(`สร้างไม่ได้: ${valid.reason}`);
           else if (!canSpend(cost)) setStatus('สร้างไม่ได้: เงินไม่พอหรือกำลังติดลบ');
+          else if (!confirmRoadBuild(cells, tool.key, cost)) setStatus('ยกเลิกการสร้างถนน');
           else { placeRoadCells(cells, tool.key, true); setStatus(`สร้าง/อัปเกรดถนน ${cells.length} ช่อง ราคา ${formatMoney(cost)} บาท`); }
         } else if (tool.type === 'demolishRoad') {
-          let removed = 0;
-          for (const i of cells) { const p2 = xy(i); if (removeRoadCell(p2.x, p2.y, true)) removed++; }
-          setStatus(`รื้อถนน ${removed} ช่อง`);
+          if (!confirmRoadDemolish(cells)) setStatus('ยกเลิกการรื้อถนน');
+          else {
+            let removed = 0;
+            for (const i of cells) { const p2 = xy(i); if (removeRoadCell(p2.x, p2.y, true)) removed++; }
+            setStatus(`รื้อถนน ${removed} ช่อง`);
+          }
         }
         updateToolButtons();
         game.suppressClickUntil = performance.now() + 450;
       } else if (mode === 'buildTap' && tool && tool.type === 'building' && game.touchBuildCurrent) {
         const g = game.touchBuildCurrent;
-        const res = addBuilding(tool.key, g.x, g.y, true);
-        if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+        const check = canPlaceBuilding(tool.key, g.x, g.y, true);
+        if (!check.ok) setStatus(`วางไม่ได้: ${check.reason}`);
+        else if (!confirmBuildingBuild(tool.key, g.x, g.y)) setStatus('ยกเลิกการวางอาคาร');
+        else {
+          const res = addBuilding(tool.key, g.x, g.y, true);
+          if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+        }
         updateToolButtons();
         game.suppressClickUntil = performance.now() + 450;
       } else if (mode === 'inspectTap' && !game.panMoved && game.touchBuildCurrent) {
@@ -3918,6 +3891,7 @@ body, #app, canvas {
       const cost = estimateRoadCost(cells, tool.key);
       if (!valid.ok) { setStatus(`สร้างไม่ได้: ${valid.reason}`); game.roadStart = null; return; }
       if (!canSpend(cost)) { setStatus('สร้างไม่ได้: เงินไม่พอหรือกำลังติดลบ'); game.roadStart = null; return; }
+      if (!confirmRoadBuild(cells, tool.key, cost)) { setStatus('ยกเลิกการสร้างถนน'); game.roadStart = null; return; }
       placeRoadCells(cells, tool.key, true);
       setStatus(`สร้าง/อัปเกรดถนน ${cells.length} ช่อง ราคา ${formatMoney(cost)} บาท`);
       game.roadStart = null;
@@ -3925,13 +3899,19 @@ body, #app, canvas {
     } else if (tool.type === 'demolishRoad') {
       if (!game.roadStart) { game.roadStart = g; setStatus('เลือกจุดปลายของเส้นถนนที่จะรื้อ'); return; }
       const cells = getLineCells(game.roadStart.x, game.roadStart.y, g.x, g.y);
+      if (!confirmRoadDemolish(cells)) { setStatus('ยกเลิกการรื้อถนน'); game.roadStart = null; return; }
       let removed = 0;
       for (const i of cells) { const p2 = xy(i); if (removeRoadCell(p2.x, p2.y, true)) removed++; }
       setStatus(`รื้อถนน ${removed} ช่อง`);
       game.roadStart = null;
     } else if (tool.type === 'building') {
-      const res = addBuilding(tool.key, g.x, g.y, true);
-      if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+      const check = canPlaceBuilding(tool.key, g.x, g.y, true);
+      if (!check.ok) setStatus(`วางไม่ได้: ${check.reason}`);
+      else if (!confirmBuildingBuild(tool.key, g.x, g.y)) setStatus('ยกเลิกการวางอาคาร');
+      else {
+        const res = addBuilding(tool.key, g.x, g.y, true);
+        if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+      }
       updateToolButtons();
     }
   });
@@ -4012,80 +3992,6 @@ body, #app, canvas {
   });
   document.addEventListener('touchmove', preventBrowserPanZoom, { passive:false });
 
-  function panMap(dir, amount = 42) {
-    // Same camera behavior as keyboard arrows: pressing left shows more left-side map.
-    if (dir === 'left') game.pan.x += amount;
-    else if (dir === 'right') game.pan.x -= amount;
-    else if (dir === 'up') game.pan.y += amount;
-    else if (dir === 'down') game.pan.y -= amount;
-  }
-  const mapJoy = document.getElementById('mapJoy');
-  let joyTimer = null;
-  let joyCollapsed = false;
-  function stopJoyPan() {
-    if (joyTimer) clearInterval(joyTimer);
-    joyTimer = null;
-  }
-  function setJoyCollapsed(collapsed) {
-    if (!mapJoy) return;
-    joyCollapsed = !!collapsed;
-    stopJoyPan();
-    mapJoy.classList.toggle('joy-collapsed', joyCollapsed);
-    const mid = mapJoy.querySelector('.joy-mid');
-    if (mid) {
-      mid.textContent = joyCollapsed ? '•' : '✥';
-      mid.setAttribute('aria-label', joyCollapsed ? 'ขยายปุ่มจอย' : 'ย่อปุ่มจอย');
-      mid.setAttribute('title', joyCollapsed ? 'ขยายปุ่มจอย' : 'ย่อปุ่มจอย');
-    }
-    setStatus(joyCollapsed ? 'ย่อปุ่มจอยแล้ว • กดจุดกลางเพื่อเปิดอีกครั้ง' : 'เปิดปุ่มจอยแล้ว • กดปุ่มกลางเพื่อย่อ');
-  }
-  function toggleJoyCollapsed(e) {
-    if (e) {
-      if (e.cancelable) e.preventDefault();
-      e.stopPropagation();
-    }
-    const now = performance.now();
-    if (mapJoy && mapJoy._lastToggle && now - mapJoy._lastToggle < 260) return;
-    if (mapJoy) mapJoy._lastToggle = now;
-    setJoyCollapsed(!joyCollapsed);
-  }
-  function startJoyPan(dir, e) {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    if (joyCollapsed) return;
-    stopJoyPan();
-    panMap(dir, 50);
-    joyTimer = setInterval(() => panMap(dir, 34), 45);
-    setStatus('ใช้ปุ่มจอยเลื่อนแมปได้ • กดปุ่มกลางเพื่อย่อจอย • 1 นิ้วสร้าง/แตะ');
-  }
-  if (mapJoy) {
-    mapJoy.addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive:false });
-    const joyMid = mapJoy.querySelector('.joy-mid');
-    if (joyMid) {
-      joyMid.disabled = false;
-      if (window.PointerEvent) joyMid.addEventListener('pointerdown', toggleJoyCollapsed);
-      else {
-        joyMid.addEventListener('touchstart', toggleJoyCollapsed, { passive:false });
-        joyMid.addEventListener('mousedown', toggleJoyCollapsed);
-      }
-      joyMid.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
-    }
-    mapJoy.querySelectorAll('button[data-pan]').forEach(btn => {
-      const dir = btn.dataset.pan;
-      if (window.PointerEvent) btn.addEventListener('pointerdown', (e) => startJoyPan(dir, e));
-      else {
-        btn.addEventListener('touchstart', (e) => startJoyPan(dir, e), { passive:false });
-        btn.addEventListener('mousedown', (e) => startJoyPan(dir, e));
-      }
-      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
-    });
-    ['pointerup','pointercancel','mouseup','mouseleave','touchend','touchcancel','blur'].forEach(type => {
-      window.addEventListener(type, stopJoyPan, { passive:false });
-    });
-  }
-
   document.querySelectorAll('.speedBtn').forEach(btn => btn.addEventListener('click', () => {
     game.speed = Number(btn.dataset.speed);
     game.skipMode = false;
@@ -4105,8 +4011,20 @@ body, #app, canvas {
   });
   heatBtn.addEventListener('click', () => { game.heatmap = !game.heatmap; heatBtn.textContent = `🌡 Heatmap: ${game.heatmap ? 'เปิด' : 'ปิด'}`; });
   debugBtn.addEventListener('click', () => { game.debug = !game.debug; debugBtn.textContent = `🧪 Debug: ${game.debug ? 'เปิด' : 'ปิด'}`; });
-  document.getElementById('resetBtn').addEventListener('click', () => resetCity(citySelect.value));
-  citySelect.addEventListener('change', () => resetCity(citySelect.value));
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    if (!confirmResetCity(citySelect.value)) { setStatus('ยกเลิกการเริ่มเมืองใหม่'); return; }
+    resetCity(citySelect.value);
+  });
+  citySelect.addEventListener('change', () => {
+    const nextKey = citySelect.value;
+    const oldKey = game.cityKey;
+    if (!confirmResetCity(nextKey)) {
+      citySelect.value = oldKey;
+      setStatus('ยกเลิกการเปลี่ยนเมือง');
+      return;
+    }
+    resetCity(nextKey);
+  });
 
   let last = performance.now();
   let uiTick = 0;
