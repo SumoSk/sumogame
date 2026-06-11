@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traffic Fixer Thailand - Playable Prototype</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <header id="topbar">
+      <div class="brand">
+        <span class="logo">🚦</span>
+        <div>
+          <strong>Traffic Fixer Thailand</strong>
+          <small>Empty Map + Close Zoom v0.5</small>
+        </div>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div class="top-actions">
+        <label class="city-picker">
+          <span>เมือง</span>
+          <select id="citySelect" title="เลือกเมือง">
+            <option value="phuket">ภูเก็ต</option>
+            <option value="bangkok">กรุงเทพฯ</option>
+            <option value="chiangmai">เชียงใหม่</option>
+            <option value="korat">โคราช</option>
+          </select>
+        </label>
+        <button id="resetBtn" class="danger-lite">เริ่มใหม่</button>
+      </div>
+    </header>
+
+    <section id="quickHelp" class="quick-help">
+      <b>เริ่มเร็ว:</b>
+      <span>1) ลากถนนจาก Gate</span>
+      <span>2) วางบ้านติดถนน</span>
+      <span>3) วางงาน/ร้านอาหาร</span>
+      <em>ล้อเมาส์ซูมได้ใกล้ขึ้น / ลากเมาส์ขวาเพื่อเลื่อนแผนที่</em>
+    </section>
+
+    <aside id="leftPanel" class="panel left">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">สร้างเมือง</div>
+          <div class="hint">เลือกหมวดด้านล่าง เพื่อลดความรกของเมนู</div>
+        </div>
+      </div>
+      <div id="toolList"></div>
+    </aside>
+
+    <aside id="rightPanel" class="panel right">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">ข้อมูลที่คลิก</div>
+          <div class="hint">ถนน / อาคาร / Gate / รถ จะแสดงสาเหตุจริงจาก Simulation</div>
+        </div>
+      </div>
+      <div id="selectionInfo" class="card inspector-card">
+        <b>มือเปล่า</b><br>
+        คลิกถนน อาคาร Gate หรือรถ เพื่อดูสาเหตุปัญหา
+      </div>
+      <div class="panel-subtitle">ปัญหาที่ต้องแก้</div>
+      <div id="alerts"></div>
+    </aside>
+
+    <div id="mapLegend" class="map-legend">
+      <span><i class="dot road"></i> ถนนปกติ</span>
+      <span><i class="dot gate"></i> Gate</span>
+      <span><i class="dot vehicle"></i> รถ</span>
+      <span><i class="dot heat"></i> Heatmap แสดงรถติด</span>
+    </div>
+
+    <footer id="bottombar">
+      <div class="speed-group">
+        <button data-speed="0" class="speedBtn">⏸ Pause</button>
+        <button data-speed="1" class="speedBtn active">1x</button>
+        <button data-speed="2" class="speedBtn">2x</button>
+        <button data-speed="5" class="speedBtn">5x</button>
+      </div>
+      <button id="skipBtn" class="wide-btn">⏭ ข้ามวัน 06:00</button>
+      <button id="heatBtn">🌡 Heatmap: ปิด</button>
+      <button id="debugBtn">🧪 Debug: ปิด</button>
+      <span id="statusText">พร้อมเล่น</span>
+    </footer>
+  </div>
+
+  <script src="src/main.js"></script>
+</body>
+</html>
