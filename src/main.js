@@ -186,10 +186,6 @@
     draggingPan: false,
     lastMouse: { x: 0, y: 0 },
     mouseWorld: { x: 0, y: 0 },
-    panMoved: false,
-    suppressClickUntil: 0,
-    touchMode: null,
-    touchLast: null,
     lastDailyAbsDay: -1,
     immigrationTick: 0,
     passTick: 0,
@@ -1431,9 +1427,7 @@
     const businessTax = buildings.reduce((s, b) => s + b.employees * 50, 0);
     const maintenance = computeRoadMaintenance() + buildings.reduce((s,b)=>s+buildingType(b).maintenance,0);
     const activeTrips = vehicles.length;
-    const demandRows = computeDemandSummary();
-    const demandShortage = demandRows.reduce((sum, d) => sum + Math.max(0, d.shortage || 0), 0);
-    return { population, movingIn, unemployed, jobVac, avgSat, trafficFlow, residentTax, businessTax, maintenance, activeTrips, demandShortage };
+    return { population, movingIn, unemployed, jobVac, avgSat, trafficFlow, residentTax, businessTax, maintenance, activeTrips };
   }
 
   function renderStats() {
@@ -1446,7 +1440,6 @@
       { icon:'📈', label:'สุทธิ/วัน', value:`${net >= 0 ? '+' : ''}${formatMoney(net)}`, cls:net >= 0 ? 'good' : 'bad' },
       { icon:'👥', label:'ประชากร', value:formatMoney(s.population), cls:s.population ? 'good' : 'warn', inspect:'population' },
       { icon:'😊', label:'ความสุข', value:`${Math.round(s.avgSat)}%`, cls:kpiState(s.avgSat, 75, 45), inspect:'happiness' },
-      { icon:'📣', label:'ความต้องการ', value:s.demandShortage ? `${formatCompact(s.demandShortage)} คน` : '0', cls:s.demandShortage ? 'warn' : 'good', inspect:'demand' },
       { icon:'🚗', label:'Traffic Flow', value:`${Math.round(s.trafficFlow)}%`, cls:kpiState(s.trafficFlow, 70, 40) },
     ];
     statsEl.innerHTML = rows.map(r => `<div class="stat ${r.cls || ''} ${r.inspect ? 'clickable' : ''}" ${r.inspect ? `data-inspect="${r.inspect}"` : ''}><span class="label">${r.icon} ${r.label}</span><b>${r.value}</b></div>`).join('');
@@ -1482,89 +1475,6 @@
       <div class="breakdown-list">${traitRows || '<div class="muted">ยังไม่มีประชากร</div>'}</div>
       <div class="panel-subtitle">งานว่างอยู่ที่ไหน</div>
       <div class="vacancy-list">${vacancies.length ? vacancies.map(x => `<div class="vacancy-item"><b>${escapeHtml(x.t.name)} #${x.b.id}</b><br><span class="muted">ตำแหน่งว่าง ${x.free}/${x.t.jobs} • พิกัด ${x.b.x}, ${x.b.y}</span></div>`).join('') : '<div class="muted">ยังไม่มีงานว่าง หรือยังไม่มีอาคารงาน</div>'}</div>`;
-  }
-
-  function computeDemandSummary() {
-    const residents = citizens.filter(c => c.resident && !c.removed && !c.movingOut);
-    const rows = [];
-    const workers = residents.filter(c => c.profile.workDays.length);
-    const unemployed = workers.filter(c => !c.workId).length;
-    const jobCap = buildings.reduce((sum,b)=>sum+buildingType(b).jobs,0);
-    const jobsUsed = buildings.reduce((sum,b)=>sum+b.employees,0);
-    if (unemployed > 0) rows.push({ key:'job', label:'งาน', icon:'🏢', need:workers.length, capacity:jobCap, used:jobsUsed, shortage:unemployed, detail:`คนว่างงาน ${unemployed} คนจากคนที่ต้องทำงาน ${workers.length} คน` });
-
-    const serviceDemand = new Map([['shop',0],['restaurant',0],['mall',0],['park',0],['pub',0]]);
-    const wd = weekday();
-    for (const c of residents) {
-      const p = c.profile;
-      if (p.trait === 'บ้านรวย') {
-        const kind = ['mall','restaurant','pub'][c.id % 3];
-        serviceDemand.set(kind, (serviceDemand.get(kind)||0) + 1);
-      } else if (p.workDays.includes(wd)) {
-        if (p.afterWork && (p.trait !== 'ขยัน' || c.id % 6 === 0)) serviceDemand.set(p.afterWork, (serviceDemand.get(p.afterWork)||0) + 1);
-      } else if (p.weekendKind) {
-        serviceDemand.set(p.weekendKind, (serviceDemand.get(p.weekendKind)||0) + 1);
-      }
-    }
-    for (const [kind, need] of serviceDemand.entries()) {
-      if (!need) continue;
-      const bs = buildings.filter(b => buildingType(b).kind === kind);
-      const capacity = bs.reduce((sum,b)=>sum+buildingType(b).service,0);
-      const used = bs.reduce((sum,b)=>sum+b.visitors+b.reservedService,0);
-      const shortage = Math.max(0, need - capacity);
-      rows.push({
-        key: kind,
-        label: kindName(kind),
-        icon: ({shop:'🛒',restaurant:'🍜',mall:'🏬',park:'🌳',pub:'🎵'})[kind] || '📍',
-        need,
-        capacity,
-        used,
-        shortage,
-        detail: shortage > 0 ? `ต้องการ${kindName(kind)} ${need} คน แต่รองรับได้ ${capacity} คน ขาด ${shortage} คน` : `ต้องการ${kindName(kind)} ${need} คน รองรับได้ ${capacity} คน`
-      });
-    }
-
-    const vacantHomeCap = buildings.reduce((sum,b)=>{
-      const t = buildingType(b);
-      if (t.kind !== 'home') return sum;
-      return sum + Math.max(0, t.residents - actualResidentsInBuilding(b) - b.reservedResidents);
-    },0);
-    if (vacantHomeCap <= 0 && gates.some(g => g.entrance != null)) rows.push({ key:'home', label:'บ้าน', icon:'🏠', need:1, capacity:0, used:0, shortage:1, detail:'บ้านว่างไม่พอสำหรับคนย้ายเข้าใหม่' });
-    if (!gates.some(g => g.entrance != null)) rows.push({ key:'gateRoad', label:'ถนนเข้าเมือง', icon:'🛣️', need:1, capacity:0, used:0, shortage:1, detail:'ยังไม่มีถนนเชื่อม Gate เข้าเมือง คนย้ายเข้าและรถผ่านเมืองเข้าไม่ได้' });
-
-    // รวมเหตุการณ์ Demand ที่เกิดขึ้นจริงวันนี้จาก Alert เพื่อไม่ให้ปัญหาที่เพิ่งเกิดหายไปจาก Dashboard
-    const today = absDay();
-    const alertDemand = new Map();
-    for (const a of alerts) {
-      if (Math.floor(a.t / 1440) !== today) continue;
-      if (!a.title.startsWith('ต้องการ')) continue;
-      const label = a.title.replace('ต้องการ','');
-      alertDemand.set(label, (alertDemand.get(label)||0) + a.count);
-    }
-    for (const [label, count] of alertDemand.entries()) {
-      const existing = rows.find(r => r.label === label);
-      if (existing) existing.shortage = Math.max(existing.shortage, count);
-      else rows.push({ key:`alert-${label}`, label, icon:'⚠️', need:count, capacity:0, used:0, shortage:count, detail:`มี Demand เกิดขึ้นจริงจาก Simulation ${count} คน` });
-    }
-    return rows.sort((a,b)=>(b.shortage-a.shortage) || (b.need-a.need));
-  }
-
-  function inspectDemandSummary() {
-    const rows = computeDemandSummary();
-    const totalShortage = rows.reduce((sum,r)=>sum+Math.max(0,r.shortage||0),0);
-    const cards = rows.length ? rows.map(r => {
-      const pct = r.need ? clamp((r.capacity / Math.max(1, r.need)) * 100, 0, 100) : 0;
-      const bad = r.shortage > 0;
-      return `<div class="breakdown-row demand-row ${bad ? 'bad-demand' : 'good-demand'}"><b><span>${r.icon} ต้องการ${escapeHtml(r.label)}</span><span>${bad ? `ขาด ${formatCompact(r.shortage)} คน` : 'พอ'}</span></b><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="muted" style="margin-top:5px">${escapeHtml(r.detail)} • ใช้งาน/จองตอนนี้ ${formatCompact(r.used||0)}</div></div>`;
-    }).join('') : '<div class="card muted">✅ ตอนนี้ยังไม่มี Demand หลัก</div>';
-    selectionEl.innerHTML = `<div class="inspector-title">📣 แดชบอร์ดความต้องการ</div>
-      <div class="muted">สรุปจากตารางชีวิต Citizen, Capacity อาคาร, งานว่าง และ Alert ที่เกิดจริงใน Simulation</div>
-      <div class="metric-grid">
-        ${toolMetric('ความต้องการที่ยังขาด', `${formatCompact(totalShortage)} คน`)}
-        ${toolMetric('รายการ Demand', `${rows.length} รายการ`)}
-      </div>
-      <div class="panel-subtitle">รายการที่เมืองต้องการ</div>
-      <div class="breakdown-list">${cards}</div>`;
   }
 
   function inspectHappinessSummary() {
@@ -2297,7 +2207,7 @@
   function buildToolButtons() {
     const groups = [];
     groups.push({ filter:'manage', title:'จัดการ', items:[
-      { type:'hand', key:'hand', name:'มือเปล่า', meta:'คลิก Inspect • คลิกซ้ายลากแผนที่ • iPad ใช้นิ้วลาก/จีบซูม' },
+      { type:'hand', key:'hand', name:'มือเปล่า', meta:'คลิก Inspect • คลิกขวา/ล้อกลางเพื่อลากแผนที่' },
       { type:'demolishRoad', key:'demolishRoad', name:'รื้อถนน', meta:'ค่ารื้อ 20% ของราคาถนนเดิม' }
     ] });
     groups.push({ filter:'road', title:'ถนน', items:Object.values(DATA.roads).map(r => ({ type:'road', key:r.key, name:r.name, meta:`${r.lanes} เลน • ${r.cost}/ช่อง • บำรุง ${r.maintenance}/วัน` })) });
@@ -2332,7 +2242,6 @@
     const type = card.dataset.inspect;
     if (type === 'population') inspectPopulationSummary();
     else if (type === 'happiness') inspectHappinessSummary();
-    else if (type === 'demand') inspectDemandSummary();
   });
 
   toolListEl.addEventListener('click', (e) => {
@@ -2376,7 +2285,7 @@
   function toolMetric(label, value) { return `<div class="metric"><span>${label}</span><b>${value}</b></div>`; }
   function showToolInfo() {
     if (!game.selectedTool) {
-      selectionEl.innerHTML = '<div class="inspector-title">👆 มือเปล่า</div><div class="muted">คลิกถนน อาคาร Gate หรือรถ เพื่อดูรายละเอียด • คลิกซ้ายลากแผนที่ / iPad ใช้นิ้วลากและจีบซูม</div>';
+      selectionEl.innerHTML = '<div class="inspector-title">👆 มือเปล่า</div><div class="muted">คลิกถนน อาคาร Gate หรือรถ เพื่อดูรายละเอียดจาก Simulation จริง</div>';
       return;
     }
     const tool = game.selectedTool;
@@ -2491,12 +2400,6 @@
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
-  function touchPoint(t) {
-    const rect = canvas.getBoundingClientRect();
-    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
-  }
-  function touchMid(a, b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }; }
-  function touchDist(a, b) { return Math.hypot(a.x-b.x, a.y-b.y); }
 
   canvas.addEventListener('mousemove', (e) => {
     const p = pointerPos(e);
@@ -2504,112 +2407,23 @@
     const g = screenToGrid(p.x, p.y);
     game.hover = inBounds(g.x, g.y) ? g : null;
     if (game.draggingPan) {
-      const dx = p.x - game.mouseWorld.x;
-      const dy = p.y - game.mouseWorld.y;
-      if (Math.abs(dx) + Math.abs(dy) > 0) {
-        game.pan.x += dx;
-        game.pan.y += dy;
-        if (Math.hypot(p.x - game.panStart.x, p.y - game.panStart.y) > 5) game.panMoved = true;
-      }
+      game.pan.x += p.x - game.mouseWorld.x;
+      game.pan.y += p.y - game.mouseWorld.y;
       game.mouseWorld = p;
     }
   });
-
   canvas.addEventListener('mousedown', (e) => {
     const p = pointerPos(e);
-    // มือเปล่า: คลิกซ้ายค้างแล้วลากเพื่อเลื่อนแผนที่ แทนคลิกขวา
-    // ตอนเลือกเครื่องมือก่อสร้างยังใช้คลิกซ้ายวางของได้ตามเดิม ส่วนล้อกลาง/คลิกขวายังลากได้เป็นทางเลือก
-    if ((e.button === 0 && !game.selectedTool) || e.button === 1 || e.button === 2) {
-      game.draggingPan = true;
-      game.panMoved = false;
-      game.panStart = p;
-      game.mouseWorld = p;
-      canvas.classList.add('dragging');
-      e.preventDefault();
-      return;
+    if (e.button === 1 || e.button === 2) {
+      game.draggingPan = true; game.mouseWorld = p; canvas.classList.add('dragging'); return;
     }
   });
-
-  window.addEventListener('mouseup', () => {
-    if (game.draggingPan) {
-      if (game.panMoved) game.suppressClickUntil = performance.now() + 250;
-      game.draggingPan = false;
-      game.panMoved = false;
-      canvas.classList.remove('dragging');
-    }
+  window.addEventListener('mouseup', (e) => {
+    if (game.draggingPan) { game.draggingPan = false; canvas.classList.remove('dragging'); }
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  canvas.addEventListener('touchstart', (e) => {
-    if (!e.touches.length) return;
-    e.preventDefault();
-    if (e.touches.length === 1) {
-      const p = touchPoint(e.touches[0]);
-      game.touchMode = 'pan';
-      game.touchLast = p;
-      game.panStart = p;
-      game.panMoved = false;
-      canvas.classList.add('dragging');
-    } else {
-      const a = touchPoint(e.touches[0]);
-      const b = touchPoint(e.touches[1]);
-      game.touchMode = 'pinch';
-      game.touchLast = touchMid(a, b);
-      game.touchDist = touchDist(a, b);
-      game.touchZoom = game.zoom;
-      game.panMoved = true;
-      canvas.classList.add('dragging');
-    }
-  }, { passive:false });
-
-  canvas.addEventListener('touchmove', (e) => {
-    if (!game.touchMode) return;
-    e.preventDefault();
-    if (game.touchMode === 'pan' && e.touches.length === 1) {
-      const p = touchPoint(e.touches[0]);
-      const dx = p.x - game.touchLast.x;
-      const dy = p.y - game.touchLast.y;
-      game.pan.x += dx;
-      game.pan.y += dy;
-      if (Math.hypot(p.x - game.panStart.x, p.y - game.panStart.y) > 5) game.panMoved = true;
-      game.touchLast = p;
-      const g = screenToGrid(p.x, p.y);
-      game.hover = inBounds(g.x, g.y) ? g : null;
-    } else if (e.touches.length >= 2) {
-      const a = touchPoint(e.touches[0]);
-      const b = touchPoint(e.touches[1]);
-      const mid = touchMid(a, b);
-      game.pan.x += mid.x - game.touchLast.x;
-      game.pan.y += mid.y - game.touchLast.y;
-      const before = screenToWorld(mid.x, mid.y);
-      const factor = touchDist(a, b) / Math.max(1, game.touchDist || 1);
-      game.zoom = clamp(game.touchZoom * factor, 0.22, 5.2);
-      const after = screenToWorld(mid.x, mid.y);
-      game.pan.x += (after.x - before.x) * TILE * game.zoom;
-      game.pan.y += (after.y - before.y) * TILE * game.zoom;
-      game.touchLast = mid;
-      game.panMoved = true;
-    }
-  }, { passive:false });
-
-  canvas.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    if (e.touches.length === 0) {
-      if (game.panMoved) game.suppressClickUntil = performance.now() + 350;
-      game.touchMode = null;
-      game.touchLast = null;
-      game.panMoved = false;
-      canvas.classList.remove('dragging');
-    } else if (e.touches.length === 1) {
-      const p = touchPoint(e.touches[0]);
-      game.touchMode = 'pan';
-      game.touchLast = p;
-      game.panStart = p;
-    }
-  }, { passive:false });
-
   canvas.addEventListener('click', (e) => {
-    if (performance.now() < game.suppressClickUntil) return;
     if (e.button !== 0) return;
     const p = pointerPos(e);
     const g = screenToGrid(p.x, p.y);
@@ -2663,23 +2477,6 @@
     if (e.key === 'ArrowUp' || e.key === 'w') game.pan.y += step;
     if (e.key === 'ArrowDown' || e.key === 's') game.pan.y -= step;
   });
-
-  function setPanelCollapsed(el, collapsed) {
-    if (!el) return;
-    el.classList.toggle('collapsed', collapsed);
-    const btn = el.querySelector(':scope > .collapse-btn');
-    if (btn) btn.textContent = collapsed ? '+' : '−';
-  }
-  document.querySelectorAll('.collapse-btn').forEach(btn => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const el = document.getElementById(btn.dataset.collapseTarget);
-    setPanelCollapsed(el, !el.classList.contains('collapsed'));
-  }));
-  const coarseUi = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-  if (coarseUi || /iPad|iPhone|Android/.test(navigator.userAgent)) {
-    setPanelCollapsed(document.getElementById('leftPanel'), true);
-    setPanelCollapsed(document.getElementById('rightPanel'), true);
-  }
 
   document.querySelectorAll('.speedBtn').forEach(btn => btn.addEventListener('click', () => {
     game.speed = Number(btn.dataset.speed);
