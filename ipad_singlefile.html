@@ -1,3 +1,592 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traffic Fixer Thailand - Prototype</title>
+  <style>
+:root {
+  --bg: #0b1820;
+  --panel: rgba(248, 250, 252, 0.92);
+  --panel-strong: rgba(255, 255, 255, 0.96);
+  --line: rgba(15, 23, 42, 0.12);
+  --text: #14212b;
+  --muted: #64748b;
+  --accent: #f59e0b;
+  --accent2: #0284c7;
+  --good: #16a34a;
+  --bad: #dc2626;
+  --warn: #ea580c;
+  --dark-panel: rgba(10, 19, 26, 0.76);
+}
+* { box-sizing: border-box; text-shadow: none !important; }
+.brand .logo, .tool .tool-icon, .panel-title:before, .dot { box-shadow: none !important; filter: none !important; }
+html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, sans-serif;
+  background: radial-gradient(circle at 45% 10%, rgba(125, 211, 252, .20), transparent 28%), var(--bg);
+  color: var(--text);
+}
+canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+  background: #b9d8aa;
+}
+canvas.dragging { cursor: grabbing; }
+#topbar, #bottombar, .panel, .map-legend {
+  position: absolute;
+  z-index: 5;
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+#topbar {
+  left: 14px;
+  right: 14px;
+  top: 12px;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,.62);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(236,244,250,.86));
+  box-shadow: 0 16px 48px rgba(15, 23, 42, .20), inset 0 1px 0 rgba(255,255,255,.88);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 245px; }
+.brand .logo {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  font-size: 25px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fbbf24, #fb923c);
+}
+.brand strong { font-size: 15px; letter-spacing: .15px; color: #0f172a; }
+.brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.stats {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(96px, 1fr));
+  gap: 7px;
+  font-size: 12px;
+}
+.stat {
+  position: relative;
+  overflow: hidden;
+  min-height: 49px;
+  padding: 7px 9px;
+  border-radius: 15px;
+  background: rgba(255,255,255,.74);
+  border: 1px solid rgba(15, 23, 42, .08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.90);
+}
+.stat .label { display: flex; align-items: center; gap: 5px; color: var(--muted); white-space: nowrap; }
+.stat b { display: block; color: #0f172a; font-size: 15px; line-height: 1.1; margin-top: 4px; letter-spacing: .1px; }
+.stat.good b { color: var(--good); }
+.stat.warn b { color: var(--warn); }
+.stat.bad b { color: var(--bad); }
+.stat.clock { background: linear-gradient(135deg, #0f172a, #1e293b); }
+.stat.clock .label, .stat.clock b { color: #fff; }
+.stat.clickable { cursor: pointer; }
+.stat.clickable:hover { border-color: rgba(2,132,199,.40); background: #ffffff; }
+.stat.clickable:after { content: "ดูรายละเอียด"; position: absolute; right: 8px; bottom: 5px; font-size: 9px; color: #64748b; opacity: .75; }
+.breakdown-list { display: grid; gap: 7px; margin-top: 9px; }
+.breakdown-row { padding: 8px; border-radius: 12px; background: rgba(241,245,249,.86); border: 1px solid rgba(15,23,42,.06); }
+.breakdown-row b { display:flex; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.bar-track { height: 8px; border-radius: 99px; overflow: hidden; background: rgba(15,23,42,.10); }
+.bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #38bdf8, #22c55e); }
+.vacancy-list { margin-top: 8px; display:grid; gap:6px; }
+.vacancy-item { padding: 7px 8px; border-radius: 11px; background: rgba(255,255,255,.72); border:1px solid rgba(15,23,42,.07); }
+
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.city-picker {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+button, select {
+  color: #0f172a;
+  background: rgba(255,255,255,.88);
+  border: 1px solid rgba(15,23,42,.14);
+  border-radius: 13px;
+  padding: 8px 11px;
+  font-size: 13px;
+  outline: none;
+  box-shadow: 0 1px 0 rgba(255,255,255,.76), 0 8px 18px rgba(15,23,42,.06);
+}
+button { cursor: pointer; transition: transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease; }
+button:hover, select:hover { border-color: rgba(2,132,199,.38); background: #fff; box-shadow: 0 10px 24px rgba(2,132,199,.12); }
+button:active { transform: translateY(1px); }
+button.active {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #221407;
+  border-color: rgba(245,158,11,.74);
+  font-weight: 900;
+}
+.danger-lite { color: #991b1b; }
+.panel {
+  top: 96px;
+  bottom: 66px;
+  width: 318px;
+  border: 1px solid rgba(255,255,255,.64);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(242,248,252,.88));
+  padding: 12px;
+  overflow: auto;
+  box-shadow: 0 18px 56px rgba(15,23,42,.22), inset 0 1px 0 rgba(255,255,255,.9);
+  scrollbar-color: rgba(15,23,42,.22) transparent;
+}
+.panel.left { left: 14px; }
+.panel.right { right: 14px; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.panel-title { font-weight: 950; letter-spacing: .18px; color: #0f172a; font-size: 16px; }
+.panel-title:before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 99px;
+  background: var(--accent);
+}
+.panel-subtitle { color: #92400e; font-weight: 900; margin: 14px 0 8px; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.42; margin-top: 2px; }
+.tool-tabs {
+  position: sticky;
+  top: -12px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 9px 0 9px;
+  margin-bottom: 4px;
+  background: linear-gradient(180deg, rgba(248,250,252,.97), rgba(248,250,252,.82));
+}
+.tool-tab {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  background: rgba(255,255,255,.76);
+}
+.tool-tab.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+.tool-group { margin: 9px 0 14px; }
+.tool-group.is-hidden { display: none; }
+.tool-group h3 { margin: 0 0 7px; font-size: 13px; color: #334155; display: flex; align-items: center; gap: 6px; }
+.tool-grid { display: grid; grid-template-columns: 1fr; gap: 7px; }
+.tool {
+  text-align: left;
+  min-height: 64px;
+  padding: 9px 10px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.76);
+  border: 1px solid rgba(15,23,42,.09);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 8px 18px rgba(15,23,42,.045);
+}
+.tool strong { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #0f172a; }
+.tool .tool-icon { width: 24px; height: 24px; display: inline-grid; place-items: center; border-radius: 9px; background: #e0f2fe; font-size: 14px; }
+.tool small { color: var(--muted); display: block; margin-top: 5px; padding-left: 32px; font-size: 11px; line-height: 1.32; }
+.tool.active {
+  background: linear-gradient(135deg, rgba(255,237,184,.94), rgba(255,247,237,.96));
+  border-color: rgba(245,158,11,.72);
+  box-shadow: 0 0 0 2px rgba(245,158,11,.13), 0 12px 26px rgba(245,158,11,.14);
+}
+.tool.disabled { opacity: .48; filter: grayscale(.18); }
+.card {
+  background: rgba(255,255,255,.78);
+  border: 1px solid rgba(15,23,42,.09);
+  border-radius: 17px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  margin-bottom: 10px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 8px 18px rgba(15,23,42,.045);
+}
+.card b, .inspector-title { color: #0f172a; font-weight: 950; }
+.card .muted, .muted { color: var(--muted); }
+.inspector-card .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+.metric {
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(241,245,249,.86);
+  border: 1px solid rgba(15,23,42,.06);
+}
+.metric span { display: block; color: var(--muted); font-size: 11px; }
+.metric b { display: block; margin-top: 2px; font-size: 13px; }
+.alert {
+  background: linear-gradient(180deg, rgba(254,226,226,.92), rgba(255,247,237,.78));
+  border: 1px solid rgba(220,38,38,.22);
+  border-radius: 16px;
+  padding: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+}
+.alert.good { background: linear-gradient(180deg, rgba(220,252,231,.92), rgba(240,253,244,.78)); border-color: rgba(22,163,74,.25); }
+.alert b { display: block; margin-bottom: 3px; color: #0f172a; }
+.map-legend {
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: rgba(15,23,42,.64);
+  border: 1px solid rgba(255,255,255,.18);
+  color: rgba(255,255,255,.82);
+  font-size: 12px;
+  box-shadow: 0 12px 32px rgba(15,23,42,.22);
+}
+.dot { width: 10px; height: 10px; display: inline-block; border-radius: 99px; margin-right: 5px; vertical-align: -1px; }
+.dot.road { background: #5b6670; }
+.dot.gate { background: #fbbf24; }
+.dot.vehicle { background: #38bdf8; }
+.dot.heat { background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444); width: 26px; border-radius: 999px; }
+#bottombar {
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,.64);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(236,244,250,.88));
+  box-shadow: 0 16px 48px rgba(15,23,42,.18), inset 0 1px 0 rgba(255,255,255,.88);
+}
+.speed-group { display: flex; gap: 6px; padding: 4px; border-radius: 16px; background: rgba(15,23,42,.05); }
+.wide-btn { min-width: 142px; }
+#statusText {
+  margin-left: auto;
+  color: #334155;
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 33vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1320px) {
+  .stats { grid-template-columns: repeat(4, minmax(90px, 1fr)); }
+  .panel { width: 296px; }
+  .brand { min-width: 205px; }
+}
+@media (max-width: 1000px) {
+  .panel.right { display: none; }
+  .stats { grid-template-columns: repeat(3, minmax(80px, 1fr)); }
+  .map-legend { display: none; }
+}
+@media (max-width: 820px) {
+  .panel.left { display: none; }
+  .brand { min-width: 155px; }
+  .brand small { display: none; }
+  .stats { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
+  #statusText { display: none; }
+}
+
+/* User readability pass: flat text/icons, no visual shadows. */
+* { text-shadow: none !important; }
+#topbar, #bottombar, .panel, .map-legend, .stat, .tool, .card, .metric, .alert,
+button, select, .breakdown-row, .vacancy-item, .brand .logo, .tool .tool-icon, .dot {
+  box-shadow: none !important;
+  filter: none !important;
+}
+#topbar, #bottombar, .panel {
+  backdrop-filter: none !important;
+}
+.stat .label, .tool strong, .tool small, .metric span, .metric b, .inspector-title, .muted,
+.panel-title, .panel-subtitle, button, select {
+  text-shadow: none !important;
+}
+/* iPad compact HUD pass: keep the top bar small on touch/tablet screens. */
+@media (pointer: coarse), (max-width: 1180px) {
+  #topbar {
+    left: 8px;
+    right: 8px;
+    top: max(6px, env(safe-area-inset-top));
+    min-height: 50px;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 14px;
+    align-items: center;
+  }
+  .brand {
+    min-width: 122px;
+    gap: 6px;
+  }
+  .brand .logo {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    font-size: 17px;
+    border-radius: 9px;
+  }
+  .brand strong {
+    font-size: 11px;
+    line-height: 1.05;
+  }
+  .brand small {
+    display: none !important;
+  }
+  .stats {
+    grid-template-columns: repeat(6, minmax(54px, 1fr)) !important;
+    gap: 4px;
+    font-size: 9px;
+    min-width: 0;
+  }
+  .stat {
+    min-height: 34px;
+    padding: 4px 5px;
+    border-radius: 10px;
+  }
+  .stat .label {
+    font-size: 8.5px;
+    gap: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .stat b {
+    font-size: 11px;
+    line-height: 1.05;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .stat.clickable:after {
+    display: none;
+  }
+  .top-actions {
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+  button, select {
+    padding: 5px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+  .panel {
+    top: calc(max(6px, env(safe-area-inset-top)) + 58px);
+    bottom: 54px;
+  }
+  #bottombar {
+    left: 8px;
+    right: 8px;
+    bottom: max(6px, env(safe-area-inset-bottom));
+    min-height: 40px;
+    gap: 5px;
+    padding: 5px 7px;
+    border-radius: 14px;
+    overflow-x: auto;
+  }
+  #bottombar button {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+  .map-legend {
+    bottom: calc(max(6px, env(safe-area-inset-bottom)) + 48px);
+  }
+}
+
+@media (pointer: coarse) and (max-width: 820px) {
+  .brand {
+    display: none;
+  }
+  .stats {
+    grid-template-columns: repeat(6, minmax(46px, 1fr)) !important;
+  }
+  .top-actions select {
+    max-width: 78px;
+  }
+  #resetBtn {
+    max-width: 76px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 680px) {
+  .stats {
+    grid-template-columns: repeat(3, minmax(58px, 1fr)) !important;
+  }
+  #topbar {
+    align-items: flex-start;
+  }
+}
+
+/* iPad two-finger navigation + collapsible HUD pass */
+canvas { touch-action: none; }
+.collapse-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 !important;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-weight: 950;
+  line-height: 1;
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15,23,42,.18) !important;
+  box-shadow: none !important;
+}
+.panel { padding-top: 44px; }
+.panel > .collapse-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;
+}
+#topbar.collapsed, #bottombar.collapsed, .panel.collapsed {
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px !important;
+  min-height: 42px !important;
+  max-width: 42px !important;
+  max-height: 42px !important;
+  right: auto !important;
+  bottom: auto !important;
+  padding: 6px !important;
+  overflow: visible !important;
+  border-radius: 14px !important;
+  display: block !important;
+  background: rgba(255,255,255,.96) !important;
+}
+#topbar.collapsed { left: 8px !important; top: max(6px, env(safe-area-inset-top)) !important; }
+#bottombar.collapsed { left: 8px !important; bottom: max(6px, env(safe-area-inset-bottom)) !important; top: auto !important; }
+.panel.left.collapsed { left: 8px !important; top: calc(max(6px, env(safe-area-inset-top)) + 52px) !important; }
+.panel.right.collapsed { right: 8px !important; left: auto !important; top: calc(max(6px, env(safe-area-inset-top)) + 102px) !important; }
+#topbar.collapsed > :not(.collapse-btn),
+#bottombar.collapsed > :not(.collapse-btn),
+.panel.collapsed > :not(.collapse-btn) {
+  display: none !important;
+}
+#topbar.collapsed > .collapse-btn,
+#bottombar.collapsed > .collapse-btn,
+.panel.collapsed > .collapse-btn {
+  position: static !important;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+}
+.demand-row.bad-demand { background: rgba(255,247,237,.92); border-color: rgba(234,88,12,.22); }
+.demand-row.good-demand { background: rgba(240,253,244,.88); border-color: rgba(22,163,74,.18); }
+
+@media (max-width: 1000px) {
+  .panel.right { display: block; }
+}
+@media (pointer: coarse), (max-width: 1180px) {
+  .stats { grid-template-columns: repeat(7, minmax(48px, 1fr)) !important; }
+  .panel { width: min(300px, calc(100vw - 18px)); }
+  .panel.right { right: 8px; }
+  .panel.left { left: 8px; }
+  #topbar:not(.collapsed) { padding-left: 7px; }
+  #bottombar:not(.collapsed) { padding-left: 7px; }
+}
+@media (pointer: coarse) and (max-width: 680px) {
+  .stats { grid-template-columns: repeat(4, minmax(54px, 1fr)) !important; }
+}
+
+/* Final flat readability: remove every UI shadow/filter/text shadow. */
+* {
+  text-shadow: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+#topbar, #bottombar, .panel, .stat, .tool, .card, .metric, .alert, .map-legend, .collapse-btn, button, select {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+.tool-icon, .logo, .dot, .brand, .panel-title, .panel-subtitle, .inspector-title {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+
+/* iPad portrait fix: allow the collapsed tool panels to open.
+   Earlier mobile CSS hid .panel.left at <=820px; when tapping + to expand,
+   the panel lost .collapsed and became display:none, so users could not select tools. */
+@media (pointer: coarse), (max-width: 820px) {
+  .panel.left:not(.collapsed),
+  .panel.right:not(.collapsed) {
+    display: block !important;
+  }
+}
+
+</style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <header id="topbar">
+      <button class="collapse-btn" data-collapse-target="topbar" aria-label="ย่อ/ขยายแถบบน">−</button>
+      <div class="brand">
+        <span class="logo">🚦</span>
+        <div>
+          <strong>Traffic Fixer Thailand</strong>
+          <small>Playable Prototype v0.2 AI Path Fix</small>
+        </div>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div class="top-actions">
+        <select id="citySelect" title="เลือกเมือง">
+          <option value="phuket">ภูเก็ต</option>
+          <option value="bangkok">กรุงเทพฯ</option>
+          <option value="chiangmai">เชียงใหม่</option>
+          <option value="korat">โคราช</option>
+        </select>
+        <button id="happinessGuideBtn">ไกด์ความสุข</button>
+        <button id="resetBtn">เริ่มเมืองใหม่</button>
+      </div>
+    </header>
+
+    <aside id="leftPanel" class="panel left">
+      <button class="collapse-btn" data-collapse-target="leftPanel" aria-label="ย่อ/ขยายเครื่องมือ">−</button>
+      <div class="panel-title">เครื่องมือสร้าง</div>
+      <div class="hint">คอมคลิกขวาลากแมป • iPad ใช้ 2 นิ้วลากแมป/จีบซูม • 1 นิ้วสร้าง/แตะเลือก</div>
+      <div id="toolList"></div>
+    </aside>
+
+    <aside id="rightPanel" class="panel right">
+      <button class="collapse-btn" data-collapse-target="rightPanel" aria-label="ย่อ/ขยาย Inspector">−</button>
+      <div class="panel-title">Inspector / Alerts</div>
+      <div id="selectionInfo" class="card">
+        <b>มือเปล่า</b><br>
+        คลิกถนน อาคาร Gate หรือรถ เพื่อดูสาเหตุปัญหา หรือกดปุ่มไกด์ความสุข
+      </div>
+      <div class="panel-subtitle">Demand Alerts</div>
+      <div id="alerts"></div>
+    </aside>
+
+    <footer id="bottombar">
+      <button class="collapse-btn" data-collapse-target="bottombar" aria-label="ย่อ/ขยายแถบควบคุม">−</button>
+      <button data-speed="0" class="speedBtn">Pause</button>
+      <button data-speed="1" class="speedBtn active">1x</button>
+      <button data-speed="2" class="speedBtn">2x</button>
+      <button data-speed="5" class="speedBtn">5x</button>
+      <button id="skipBtn">ข้ามไปวันถัดไป 06:00</button>
+      <button id="heatBtn">Traffic Heatmap: ปิด</button>
+      <button id="debugBtn">Debug Cell: ปิด</button>
+      <span id="statusText">พร้อมเล่น</span>
+    </footer>
+  </div>
+
+  <script>
 (() => {
   'use strict';
 
@@ -10,7 +599,10 @@
   const MAP_H = 300;
   const MAP_SIZE = MAP_W * MAP_H;
   const TILE = 18;
-  const MAX_ACTIVE_VEHICLES = 850;
+  const MAX_ACTIVE_VEHICLES = 1200;
+  // สมดุลใหม่: 1 Grid ของถนนเล็ก 2 เลนรองรับได้ประมาณ 3 คันรวม
+  // ถนน 4/8 เลนยังจุเพิ่มตามความกว้าง แต่ไม่จุเกินจริงจนรถไม่ติด
+  const CARS_PER_GRID = 3;
 
   const DIRS = [
     [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -147,6 +739,7 @@
   const citySelect = document.getElementById('citySelect');
   const heatBtn = document.getElementById('heatBtn');
   const debugBtn = document.getElementById('debugBtn');
+  const happinessGuideBtn = document.getElementById('happinessGuideBtn');
 
   const road = new Uint8Array(MAP_SIZE);
   const buildGrid = new Int32Array(MAP_SIZE);
@@ -173,7 +766,7 @@
 
   const game = {
     cityKey: 'phuket',
-    money: 160000,
+    money: 500000,
     worldMin: 6 * 60,
     speed: 1,
     heatmap: false,
@@ -186,9 +779,16 @@
     draggingPan: false,
     lastMouse: { x: 0, y: 0 },
     mouseWorld: { x: 0, y: 0 },
+    panMoved: false,
+    suppressClickUntil: 0,
+    touchMode: null,
+    touchLast: null,
+    touchBuildStart: null,
+    touchBuildCurrent: null,
     lastDailyAbsDay: -1,
     immigrationTick: 0,
     passTick: 0,
+    lowSatImmigrationAlertDay: -1,
     roadCount: 0,
     lastStats: null,
     skipMode: false
@@ -235,8 +835,13 @@
     const t = road[i];
     if (!t) return 0;
     const rd = roadDataById(t);
-    const usage = flowLoad[i] * 0.75 + waitLoad[i] * 7 + cellVehicleCount(i) * 4;
-    return usage / rd.capacity;
+    const cap = Math.max(1, laneCapacityAt(i));
+    const density = cellVehicleCount(i) / cap;
+    // ใช้ density เป็นตัวหลัก เพื่อให้รถเต็ม Grid แล้วเกิดแดง/ดำจริง
+    // flowLoad = รถผ่านเยอะ, waitLoad = รถรอไฟ/รอคิว ทำให้คอขวดติดสะสม
+    const flowPressure = flowLoad[i] / Math.max(1, rd.capacity) * 0.55;
+    const waitPressure = waitLoad[i] * 1.35;
+    return density * 1.28 + flowPressure + waitPressure;
   }
   function trafficColor(ratio) {
     if (ratio <= 0.60) return '#34d174';
@@ -246,17 +851,107 @@
     return '#111111';
   }
 
-  function laneCapacityAt(i) {
+  function roadLaneCountAt(i) {
     const rd = roadDataById(road[i]);
     return rd ? rd.lanes : 0;
   }
+  function laneCapacityAt(i) {
+    const lanes = roadLaneCountAt(i);
+    if (!lanes) return 0;
+    // 2 เลน = 3 คัน/กริด, 4 เลน = 6 คัน/กริด, 8 เลน = 12 คัน/กริด
+    // เดิมคูณต่อเลนจนถนนจุ 6/12/24 ทำให้ไม่ค่อยเกิดรถติด
+    return Math.max(CARS_PER_GRID, Math.round((lanes / 2) * CARS_PER_GRID));
+  }
+  function laneCapacityAtPreview(lanes) {
+    return Math.max(CARS_PER_GRID, Math.round((lanes / 2) * CARS_PER_GRID));
+  }
   function lanesPerDirectionAt(i) {
-    return Math.max(1, Math.floor(laneCapacityAt(i) / 2));
+    return Math.max(1, Math.floor(roadLaneCountAt(i) / 2));
+  }
+  function directionCapacityAt(i) {
+    if (!road[i]) return 0;
+    return Math.max(1, Math.ceil(laneCapacityAt(i) / 2));
   }
   function moveDirKey(from, to) {
     if (from == null || to == null || from === to) return 'idle';
     const a = xy(from), b = xy(to);
     return `${sign(b.x - a.x)},${sign(b.y - a.y)}`;
+  }
+  function parseDirKey(dirKey) {
+    const parts = String(dirKey || '0,0').split(',').map(n => Number(n) || 0);
+    return { dx: parts[0] || 0, dy: parts[1] || 0 };
+  }
+  function neighborByDir(baseIdx, dirKey) {
+    const { dx, dy } = parseDirKey(dirKey);
+    const p = xy(baseIdx);
+    const nx = p.x + dx, ny = p.y + dy;
+    return inBounds(nx, ny) ? idx(nx, ny) : null;
+  }
+  function hasRoadLink(a, b) {
+    const set = roadLinks.get(a);
+    return !!(set && set.has(b) && road[a] && road[b]);
+  }
+  function approachPredecessorForBuilding(b) {
+    if (!b || b.entrance == null || !b.entryDirKey) return null;
+    const { dx, dy } = parseDirKey(b.entryDirKey);
+    const p = xy(b.entrance);
+    const px = p.x - dx, py = p.y - dy;
+    if (!inBounds(px, py)) return null;
+    const pre = idx(px, py);
+    return hasRoadLink(pre, b.entrance) ? pre : null;
+  }
+  function allBuildingApproachPredecessors(b) {
+    if (!b || b.entrance == null) return [];
+    const out = [];
+    const links = roadLinks.get(b.entrance);
+    if (links) {
+      for (const ni of links) if (road[ni] && hasRoadLink(ni, b.entrance)) out.push(ni);
+    }
+    const preferred = approachPredecessorForBuilding(b);
+    if (preferred != null && out.includes(preferred)) {
+      out.splice(out.indexOf(preferred), 1);
+      out.unshift(preferred);
+    }
+    return out;
+  }
+  function exitSuccessorForBuilding(b) {
+    if (!b || b.entrance == null || !b.entryDirKey) return null;
+    const post = neighborByDir(b.entrance, b.entryDirKey);
+    return post != null && hasRoadLink(b.entrance, post) ? post : null;
+  }
+  function constrainedPathForTrip(opts) {
+    if (opts.prePath) return opts.prePath;
+    let start = opts.fromIdx;
+    let goal = opts.toIdx;
+    let prefix = [];
+    let appendGoal = false;
+    const fromB = opts.fromBuildingId ? buildingById(opts.fromBuildingId) : null;
+    if (fromB && fromB.entrance === start && fromB.entryDirKey) {
+      const post = exitSuccessorForBuilding(fromB);
+      if (post != null && post !== start) { prefix = [start]; start = post; }
+    }
+    const destB = opts.destBuildingId ? buildingById(opts.destBuildingId) : null;
+    if (destB && destB.entrance === goal) {
+      // อาคารใช้ entrance บนถนนเป็น drop-off node: รถถึงช่องถนนที่ติดอาคารแล้วถือว่าเข้าอาคารสำเร็จ
+      // ไม่บังคับให้ต้องวน/กลับรถเพื่อเข้าจากทิศเดียว เพราะบน iPad และถนนปลายตันทำให้รถค้างหน้าอาคารได้ง่าย
+      const direct = findPath(start, goal, true, { allowDeadEndUTurn: true });
+      if (direct.length) return prefix.length ? prefix.concat(direct) : direct;
+      const candidates = allBuildingApproachPredecessors(destB);
+      for (const pre of candidates) {
+        const midTry = findPath(start, pre, true, { allowDeadEndUTurn: true });
+        if (midTry.length) {
+          const path = prefix.length ? prefix.concat(midTry) : midTry;
+          if (path[path.length - 1] !== opts.toIdx && hasRoadLink(path[path.length - 1], opts.toIdx)) path.push(opts.toIdx);
+          return path;
+        }
+      }
+      appendGoal = false;
+    }
+    const mid = findPath(start, goal, false, { allowDeadEndUTurn: true });
+    if (!mid.length) return [];
+    let path = prefix.length ? prefix.concat(mid) : mid;
+    if (appendGoal && path[path.length - 1] !== opts.toIdx) path.push(opts.toIdx);
+    return path;
   }
   function laneBucketMap(i, create = false) {
     let buckets = laneMap.get(i);
@@ -291,7 +986,7 @@
     if (!dirKey) return true;
     const buckets = laneBucketMap(i, false);
     const set = buckets && buckets.get(dirKey);
-    return !set || set.size < lanesPerDirectionAt(i);
+    return !set || set.size < directionCapacityAt(i);
   }
   function occupyCell(i, vehicleId, dirKey = 'idle') {
     if (!road[i]) return false;
@@ -375,6 +1070,16 @@
     const pos = arr.indexOf(v.id);
     return pos >= 0 ? pos % perDir : Math.abs(v.id) % perDir;
   }
+  function vehicleGridSlot(v, cellIdx) {
+    const dirKey = vehicleDirKeyForDraw(v);
+    const buckets = laneBucketMap(cellIdx, false);
+    const set = buckets && buckets.get(dirKey);
+    const perDir = lanesPerDirectionAt(cellIdx);
+    if (!set) return Math.floor((Math.abs(v.id) % Math.max(1, directionCapacityAt(cellIdx))) / perDir);
+    const arr = [...set].sort((a,b) => a - b);
+    const pos = arr.indexOf(v.id);
+    return pos >= 0 ? Math.floor(pos / perDir) : 0;
+  }
   function vehicleDirKeyForDraw(v) {
     if (v.nextIdx != null) return moveDirKey(v.currentIdx, v.nextIdx);
     if (v.pathPos + 1 < v.path.length) return moveDirKey(v.currentIdx, v.path[v.pathPos + 1]);
@@ -382,7 +1087,7 @@
     return 'idle';
   }
   function vehicleLaneOffset(v, cellIdx, roadW) {
-    const totalLanes = Math.max(2, laneCapacityAt(cellIdx));
+    const totalLanes = Math.max(2, roadLaneCountAt(cellIdx));
     const perDir = Math.max(1, Math.floor(totalLanes / 2));
     const pos = vehicleLanePosition(v, cellIdx);
     // ถนนแบ่งครึ่งตามทิศทางจริง: 2 เลน = 1 ไป/1 สวน, 4 = 2/2, 8 = 4/4
@@ -454,7 +1159,7 @@
   function resetCity(key = game.cityKey) {
     resetArrays();
     game.cityKey = key;
-    game.money = 160000;
+    game.money = 500000;
     game.worldMin = 6 * 60;
     game.speed = 1;
     game.selectedTool = null;
@@ -616,8 +1321,10 @@
       employees: 0, reservedService: 0, visitors: 0,
       workerIds: [], citizenIds: [],
       entrance: check.entrance,
+      entryDirKey: check.entryDirKey,
+      entrySideKey: check.entrySideKey,
       builtAt: game.worldMin,
-      arrivals: 0, fails: 0
+      arrivals: 0, fails: 0, delayed: 0
     };
     buildings.push(b);
     for (let yy = y; yy < y + t.h; yy++) for (let xx = x; xx < x + t.w; xx++) buildGrid[idx(xx, yy)] = b.id;
@@ -636,9 +1343,9 @@
       if (road[i]) return { ok:false, reason:'พื้นที่ทับถนน' };
       if (buildGrid[i]) return { ok:false, reason:'พื้นที่ทับสิ่งก่อสร้าง' };
     }
-    const entrance = findAdjacentRoadForRect(x, y, t.w, t.h);
-    if (entrance == null) return { ok:false, reason:'อาคารต้องติดถนนและมีทางเข้าออก' };
-    return { ok:true, entrance };
+    const access = findAdjacentRoadForRect(x, y, t.w, t.h);
+    if (!access) return { ok:false, reason:'อาคารต้องติดถนนและมีทางเข้าออก' };
+    return { ok:true, entrance: access.entrance, entryDirKey: access.entryDirKey, entrySideKey: access.entrySideKey };
   }
 
   function findAdjacentRoadForRect(x, y, w, h) {
@@ -650,8 +1357,18 @@
       if (!outside) continue;
       const i = idx(xx, yy);
       if (road[i]) {
+        const dxToBuilding = (x + w / 2 - 0.5) - xx;
+        const dyToBuilding = (y + h / 2 - 0.5) - yy;
+        let sideX = 0, sideY = 0;
+        if (Math.abs(dxToBuilding) >= Math.abs(dyToBuilding)) sideX = sign(dxToBuilding);
+        else sideY = sign(dyToBuilding);
+        if (!sideX && !sideY) sideY = 1;
+        // รถไทยขับชิดซ้าย: อาคารจะรับรถจากเลนฝั่งที่ติดอาคารเท่านั้น
+        // left-normal ของทิศทางวิ่ง (dx,dy) คือ (-dy,dx) จึงย้อนกลับเป็น dir=(sideY,-sideX)
+        const entryDirKey = `${sideY},${-sideX}`;
+        const entrySideKey = `${sideX},${sideY}`;
         const score = Math.abs(xx - (x + w / 2)) + Math.abs(yy - (y + h / 2));
-        if (score < bestScore) { bestScore = score; best = i; }
+        if (score < bestScore) { bestScore = score; best = { entrance: i, entryDirKey, entrySideKey }; }
       }
     }
     return best;
@@ -824,7 +1541,7 @@
     if (game.money < -10000) game.money = -10000;
 
     for (const g of gates) { g.inToday = 0; g.outToday = 0; g.passToday = 0; }
-    for (const b of buildings) { b.arrivals = 0; b.fails = 0; }
+    for (const b of buildings) { b.arrivals = 0; b.fails = 0; b.delayed = 0; }
 
     assignJobs();
     for (const c of citizens) {
@@ -939,9 +1656,21 @@
 
   function immigrationManager(gameMinutes) {
     game.immigrationTick += gameMinutes;
-    if (game.immigrationTick < 18) return;
+    if (game.immigrationTick < 10) return;
     game.immigrationTick = 0;
     if (vehicles.length > MAX_ACTIVE_VEHICLES * 0.8) return;
+    const residentsForSat = citizens.filter(c => c.resident && !c.removed);
+    const avgSatForImmigration = residentsForSat.length
+      ? residentsForSat.reduce((sum, c) => sum + c.satisfaction, 0) / residentsForSat.length
+      : 100;
+    if (residentsForSat.length && avgSatForImmigration < 80) {
+      const d = absDay();
+      if (game.lowSatImmigrationAlertDay !== d) {
+        game.lowSatImmigrationAlertDay = d;
+        addAlert('ประชากรหยุดย้ายเข้า', `ความพึงพอใจเฉลี่ย ${Math.round(avgSatForImmigration)}% ต่ำกว่า 80% ต้องแก้ปัญหาเมืองก่อน`, 1, 'warn');
+      }
+      return;
+    }
     const home = findVacantHome();
     if (!home) return;
     const gate = chooseOpenGate();
@@ -963,7 +1692,7 @@
 
   function passThroughManager(gameMinutes) {
     game.passTick += gameMinutes;
-    if (game.passTick < 28) return;
+    if (game.passTick < 10) return;
     game.passTick = 0;
     if (vehicles.length > MAX_ACTIVE_VEHICLES) return;
     const open = gates.filter(g => g.entrance != null);
@@ -1002,7 +1731,7 @@
     const home = buildingById(c.homeId), work = buildingById(c.workId);
     if (!home || !work) return;
     c.state = 'กำลังไปทำงาน';
-    createTrip({ citizen: c, fromIdx: home.entrance, toIdx: work.entrance, type: 'WorkTrip', deadline, destBuildingId: work.id });
+    createTrip({ citizen: c, fromIdx: home.entrance, toIdx: work.entrance, type: 'WorkTrip', deadline, fromBuildingId: home.id, destBuildingId: work.id });
   }
 
   function startAfterWork(c) {
@@ -1045,7 +1774,7 @@
     }
     target.reservedService++;
     c.state = `กำลังไป${kindName(kind)}`;
-    const ok = createTrip({ citizen: c, fromIdx: origin.entrance, toIdx: target.entrance, type: 'LeisureTrip', deadline: endAbs, destBuildingId: target.id, reservedService: true, activityEnd: endAbs });
+    const ok = createTrip({ citizen: c, fromIdx: origin.entrance, toIdx: target.entrance, type: 'LeisureTrip', deadline: endAbs, fromBuildingId: origin.id, destBuildingId: target.id, reservedService: true, activityEnd: endAbs });
     if (!ok) {
       target.reservedService--;
       c.satisfaction -= 12;
@@ -1084,7 +1813,7 @@
       origin.visitors = Math.max(0, origin.visitors - 1);
     }
     c.state = `กำลังกลับบ้าน (${reason})`;
-    createTrip({ citizen: c, fromIdx: origin.entrance, toIdx: home.entrance, type: 'ReturnHomeTrip', deadline: game.worldMin + 480, destBuildingId: home.id });
+    createTrip({ citizen: c, fromIdx: origin.entrance, toIdx: home.entrance, type: 'ReturnHomeTrip', deadline: game.worldMin + 480, fromBuildingId: origin.id, destBuildingId: home.id });
   }
 
   function startMoveOut(c) {
@@ -1094,13 +1823,13 @@
     if (!home || !gate || gate.entrance == null) return;
     c.state = 'กำลังย้ายออก';
     c.movingOut = true;
-    createTrip({ citizen: c, fromIdx: home.entrance, toIdx: gate.entrance, type: 'MoveOutTrip', deadline: game.worldMin + 1440, gateId: gate.id });
+    createTrip({ citizen: c, fromIdx: home.entrance, toIdx: gate.entrance, type: 'MoveOutTrip', deadline: game.worldMin + 1440, fromBuildingId: home.id, gateId: gate.id });
   }
 
   function createTrip(opts) {
     const from = opts.fromIdx, to = opts.toIdx;
     if (from == null || to == null || !road[from] || !road[to]) return false;
-    const path = opts.prePath || findPath(from, to, false);
+    const path = constrainedPathForTrip(opts);
     if (!path.length) return false;
     const firstDir = path.length > 1 ? moveDirKey(path[0], path[1]) : 'idle';
     if (!canEnterCell(from, -1, firstDir)) return false;
@@ -1116,12 +1845,14 @@
       nextIdx: null,
       t: 0,
       deadline: opts.deadline,
+      fromBuildingId: opts.fromBuildingId || null,
       destBuildingId: opts.destBuildingId || null,
       gateId: opts.gateId || null,
       targetGateId: opts.targetGateId || null,
       reservedService: !!opts.reservedService,
       activityEnd: opts.activityEnd || null,
       waitingGameMin: 0,
+      lateAlerted: false,
       rerouted: false,
       bornAt: game.worldMin,
       color: vehicleColor(opts.type)
@@ -1156,121 +1887,248 @@
   const gScore = new Float32Array(MAP_SIZE);
   let searchToken = 1;
 
-  function findPath(start, goal, quiet = false) {
+  function findPath(start, goal, quiet = false, opts = {}) {
     if (start === goal) return [start];
     if (!road[start] || !road[goal]) return [];
-    const cacheKey = `${roadVersion}:${start}:${goal}`;
-    const cached = pathCache.get(cacheKey);
-    if (cached) return cached;
 
-    searchToken++;
-    if (searchToken > 2000000000) { searchMark.fill(0); closedMark.fill(0); searchToken = 1; }
+    // Direction-aware A*: สถานะของเส้นทางต้องจำทั้ง "ช่องปัจจุบัน" และ "ช่องก่อนหน้า"
+    // เพราะกฎกลับรถขึ้นกับทิศที่รถวิ่งเข้ามา ถ้าจำแค่ช่องเดียว AI จะเลือกทางผิด/วน/ติดทางตันได้ง่าย
+    const initialPrev = Number.isInteger(opts.initialPrev) ? opts.initialPrev : -1;
+    const enforceNoUTurn = opts.enforceNoUTurn !== false;
+    const allowDeadEndUTurn = !!opts.allowDeadEndUTurn;
+    const trafficAware = opts.trafficAware !== false;
+    const useCache = opts.cache === true && !trafficAware;
+    const cacheKey = `${roadVersion}:${start}:${goal}:${initialPrev}:${enforceNoUTurn ? 1 : 0}:${allowDeadEndUTurn ? 1 : 0}:dir`;
+    if (useCache) {
+      const cached = pathCache.get(cacheKey);
+      if (cached) return cached;
+    }
+
+    const keyOf = (cur, prev) => `${cur}|${prev == null ? -1 : prev}`;
+    const curOf = (key) => Number(String(key).split('|')[0]);
     const heap = new MinHeap();
-    searchMark[start] = searchToken;
-    gScore[start] = 0;
-    cameFrom[start] = -1;
-    heap.push(start, heuristic(start, goal));
-    let found = false;
+    const startKey = keyOf(start, initialPrev);
+    const gMap = new Map([[startKey, 0]]);
+    const came = new Map();
+    const closed = new Set();
+
+    heap.push({ cur: start, prev: initialPrev, key: startKey }, heuristic(start, goal));
+    let foundKey = null;
     let iter = 0;
-    while (heap.length && iter++ < 32000) {
-      const cur = heap.pop();
-      if (closedMark[cur] === searchToken) continue;
-      if (cur === goal) { found = true; break; }
-      closedMark[cur] = searchToken;
-      for (const ni of linkedNeighbors(cur)) {
+    const maxIter = 90000;
+
+    while (heap.length && iter++ < maxIter) {
+      const state = heap.pop();
+      if (!state || closed.has(state.key)) continue;
+      if (state.cur === goal) { foundKey = state.key; break; }
+      closed.add(state.key);
+
+      const neighbors = linkedNeighbors(state.cur);
+      for (const ni of neighbors) {
         if (!road[ni]) continue;
-        if (closedMark[ni] === searchToken) continue;
-        const cx = cur % MAP_W, cy = Math.floor(cur / MAP_W);
+        if (enforceNoUTurn && state.prev >= 0 && wouldUTurn(state.prev, state.cur, ni) && !canUTurnAtForPath(state.cur, state.prev, opts)) {
+          continue;
+        }
+
+        const nk = keyOf(ni, state.cur);
+        if (closed.has(nk)) continue;
+
+        const cx = state.cur % MAP_W, cy = Math.floor(state.cur / MAP_W);
         const nx = ni % MAP_W, ny = Math.floor(ni / MAP_W);
         const dx = nx - cx, dy = ny - cy;
         const step = (dx && dy) ? 1.414 : 1;
-        const rd = roadDataById(road[ni]);
-        const ratio = getRoadRatio(ni);
-        const interPenalty = connCache[ni] >= 3 ? 0.35 : 0;
-        const tentative = gScore[cur] + step * (5 / rd.speed) * (1 + Math.max(0, ratio - 0.55) * 1.5) + interPenalty;
-        if (searchMark[ni] !== searchToken || tentative < gScore[ni]) {
-          searchMark[ni] = searchToken;
-          cameFrom[ni] = cur;
-          gScore[ni] = tentative;
-          heap.push(ni, tentative + heuristic(ni, goal));
+        const rd = roadDataById(road[ni]) || DATA.roads.small;
+        const ratio = trafficAware ? getRoadRatio(ni) : 0;
+        const trafficPenalty = Math.max(0, ratio - 0.35) * 2.15;
+        const junctionPenalty = roadDegree(ni) >= 3 ? 0.16 : 0;
+        const turnPenalty = pathTurnPenalty(state.prev, state.cur, ni);
+        const tentative = (gMap.get(state.key) || 0)
+          + step * (5 / rd.speed)
+          + trafficPenalty
+          + junctionPenalty
+          + turnPenalty;
+
+        if (tentative < (gMap.get(nk) ?? Infinity)) {
+          gMap.set(nk, tentative);
+          came.set(nk, state.key);
+          heap.push({ cur: ni, prev: state.cur, key: nk }, tentative + heuristic(ni, goal));
         }
       }
     }
-    if (!found) {
-      if (!quiet) addAlert('หาเส้นทางไม่ได้', 'ถนนยังไม่เชื่อมต่อจากต้นทางถึงปลายทาง', 1);
+
+    if (!foundKey) {
+      if (!quiet) addAlert('หาเส้นทางไม่ได้', 'ถนนยังไม่เชื่อมต่อจากต้นทางถึงปลายทาง หรือเส้นทางที่เหลือต้องกลับรถผิดจุด', 1);
       return [];
     }
+
     const path = [];
-    let cur = goal;
-    while (cur >= 0) {
-      path.push(cur);
-      if (cur === start) break;
-      cur = cameFrom[cur];
+    let k = foundKey;
+    while (k) {
+      path.push(curOf(k));
+      k = came.get(k);
     }
     path.reverse();
-    if (path.length > 1 && pathCache.size < 4000) pathCache.set(cacheKey, path);
+
+    if (useCache && path.length > 1 && pathCache.size < 3000) pathCache.set(cacheKey, path);
     return path;
   }
 
   function heuristic(a, b) {
     const ax = a % MAP_W, ay = Math.floor(a / MAP_W);
     const bx = b % MAP_W, by = Math.floor(b / MAP_W);
-    return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) * 0.8;
+    // Chebyshev เหมาะกับถนนที่ลากได้ทั้ง 90° และ 45° ช่วยให้ A* เลือกเส้นทางนิ่งกว่า Manhattan
+    return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) * 0.72;
+  }
+
+  function roadDegree(i) {
+    return road[i] ? linkedNeighbors(i).length : 0;
+  }
+
+  function pathTurnPenalty(prev, cur, next) {
+    if (prev == null || prev < 0 || cur == null || next == null) return 0;
+    const a = xy(prev), b = xy(cur), c = xy(next);
+    const dx1 = sign(b.x - a.x), dy1 = sign(b.y - a.y);
+    const dx2 = sign(c.x - b.x), dy2 = sign(c.y - b.y);
+    if (dx1 === -dx2 && dy1 === -dy2) return 2.2; // U-turn ถูกกฎหมายก็ยังควรเป็นทางเลือกสุดท้าย
+    if (dx1 === dx2 && dy1 === dy2) return 0;
+    const dot = dx1 * dx2 + dy1 * dy2;
+    return dot <= 0 ? 0.34 : 0.12;
+  }
+
+  function samePathFromCurrent(v, path) {
+    if (!v || !path || !path.length) return false;
+    const remaining = v.path.slice(v.pathPos);
+    if (remaining.length !== path.length) return false;
+    for (let i = 0; i < path.length; i++) if (path[i] !== remaining[i]) return false;
+    return true;
+  }
+
+  function applyVehiclePath(v, path, note = '') {
+    if (!path || path.length === 0) return false;
+    clearNextCell(v);
+    v.path = path;
+    v.pathPos = 0;
+    v.t = 0;
+    v.nextIdx = null;
+    v.rerouted = true;
+    v.waitingGameMin = 0;
+    v.rerouteCooldown = game.worldMin + 5;
+    if (note) v.lastRouteNote = note;
+    return true;
+  }
+
+  function currentLegalInitialPrev(v) {
+    return v && v.pathPos > 0 ? v.path[v.pathPos - 1] : -1;
+  }
+
+  function isAtBuildingDropoff(v) {
+    if (!v || !v.destBuildingId) return false;
+    const b = buildingById(v.destBuildingId);
+    if (!b || b.entrance == null) return false;
+    return v.currentIdx === b.entrance;
+  }
+
+  function rerouteVehicleHomeOrExit(v, reason = 'ทางขาด') {
+    clearNextCell(v);
+    const initialPrev = currentLegalInitialPrev(v);
+    const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
+
+    if (c && !c.removed) {
+      const home = buildingById(c.homeId);
+      if (home && home.entrance != null && road[home.entrance]) {
+        // ใช้กฎกลับรถจริงก่อนเสมอ: กลับได้ที่ 4 แยก/ปลายถนนเท่านั้น ไม่ปล่อยให้กลับรถกลางถนนจน AI ดูมั่ว
+        let path = findPath(v.currentIdx, home.entrance, true, { initialPrev, allowDeadEndUTurn: true });
+        // fallback เฉพาะเคสติดปลายถนนจริง ๆ เพื่อกันรถค้างถาวรหลังผู้เล่นตัดถนน
+        if (!path.length && canUTurnAtForVehicle(v, v.currentIdx, initialPrev)) {
+          path = findPath(v.currentIdx, home.entrance, true, { initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true });
+        }
+        if (path.length) {
+          v.type = 'ReturnHomeTrip';
+          v.destBuildingId = home.id;
+          v.targetGateId = null;
+          v.deadline = game.worldMin + 720;
+          c.state = `กำลังกลับบ้าน (${reason})`;
+          addAlert('รถหาเส้นทางใหม่', `Citizen ${c.id} ${reason} จึงเปลี่ยนเส้นทางกลับบ้าน`, 1, 'warn');
+          return applyVehiclePath(v, path, reason);
+        }
+      }
+      c.satisfaction -= 4;
+    }
+
+    // รถผ่านเมืองหรือรถที่ไม่มีเจ้าของ ถ้าหลุดเส้นทางและไม่มีทางแก้ ให้ลบออกจาก simulation แทนการค้างถาวร
+    if (!c || v.type === 'PassThroughTrip') {
+      releaseCell(v.currentIdx, v.id);
+      clearNextCell(v);
+      const vi = vehicles.indexOf(v);
+      if (vi >= 0) vehicles.splice(vi, 1);
+      return true;
+    }
+    return false;
   }
 
   function updateVehicles(realDt, gameMinDt) {
     for (let i = vehicles.length - 1; i >= 0; i--) {
       const v = vehicles[i];
-      if (v.deadline && game.worldMin > v.deadline && !v.rerouted && v.type !== 'ReturnHomeTrip' && v.type !== 'MoveOutTrip' && v.type !== 'PassThroughTrip') {
-        timeoutVehicle(v);
+      if (v.deadline && game.worldMin > v.deadline && v.type !== 'PassThroughTrip') {
+        const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
+        if (!v.lateAlerted) {
+          v.lateAlerted = true;
+          v.lastLatePenalty = game.worldMin;
+          if (c && !c.removed) {
+            c.satisfaction -= 3;
+            c.state = `${c.state} (ล่าช้า)`;
+            addAlert('เดินทางล่าช้า', `Citizen ${c.id} ยังไปไม่ถึงปลายทาง ระบบจะไม่ตัด Trip แล้ว แต่ความสุขจะลดลงเรื่อย ๆ`, 1, 'warn');
+          }
+        } else if (c && !c.removed && game.worldMin - (v.lastLatePenalty || v.deadline) >= 60) {
+          v.lastLatePenalty = game.worldMin;
+          c.satisfaction -= 2;
+        }
       }
       moveVehicle(v, realDt, gameMinDt);
     }
   }
 
-  function timeoutVehicle(v) {
+  function handleBlockedVehicle(v) {
+    const dest = v.path[v.path.length - 1];
+    clearNextCell(v);
+    const initialPrev = currentLegalInitialPrev(v);
+    const path = findPath(v.currentIdx, dest, true, { initialPrev, allowDeadEndUTurn: true });
+    if (path.length) {
+      return applyVehiclePath(v, path, 'เส้นทางเดิมขาด');
+    }
+    if (rerouteVehicleHomeOrExit(v, 'ถนนขาด')) return true;
     const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
-    if (v.reservedService && v.destBuildingId) {
-      const b = buildingById(v.destBuildingId);
-      if (b) { b.reservedService = Math.max(0, b.reservedService - 1); b.fails++; }
+    if (c && !c.removed && game.worldMin - (v.lastBlockedAlert || 0) > 60) {
+      v.lastBlockedAlert = game.worldMin;
+      c.satisfaction -= 5;
+      addAlert('รถค้างเพราะถนนขาด', `Citizen ${c.id} ไปต่อไม่ได้เพราะเส้นทางถูกตัด ระบบจะพยายามหาเส้นทางใหม่ต่อ`, 1, 'warn');
     }
-    if (c && c.resident && !c.removed) {
-      c.satisfaction -= 18;
-      c.failCount++;
-      addAlert('Trip ล้มเหลว', `Citizen ${c.id} ไปไม่ทันเวลา ต้อง Reroute กลับบ้าน`, 1);
-      const home = buildingById(c.homeId);
-      if (home) {
-        clearNextCell(v);
-        const path = findPath(v.currentIdx, home.entrance, true);
-        if (path.length) {
-          v.path = path;
-          v.pathPos = 0;
-          v.t = 0;
-          v.nextIdx = null;
-          v.type = 'ReturnHomeTrip';
-          v.deadline = game.worldMin + 480;
-          v.destBuildingId = home.id;
-          v.reservedService = false;
-          v.rerouted = true;
-          v.color = vehicleColor('ReturnHomeTrip');
-          c.state = 'กลับบ้านหลัง Trip Fail';
-        }
-      }
-      if (c.failCount >= 3 && !c.movingOut) {
-        c.movingOut = true;
-        pushEvent(game.worldMin + 15, 'moveOut', { citizenId: c.id });
-      }
-    }
+    waitLoad[v.currentIdx] += 1;
+    return false;
   }
 
   function moveVehicle(v, realDt, gameMinDt) {
     const rd = roadDataById(road[v.currentIdx]);
     if (rd) flowLoad[v.currentIdx] += realDt * 5;
+    // Drop-off node หน้าอาคาร: ถึงช่องถนนที่เชื่อมอาคารแล้วให้เข้าอาคารทันที ไม่ต้องพยายามกลับรถ/เปลี่ยนเลนหน้าอาคาร
+    if (isAtBuildingDropoff(v)) { arriveVehicle(v); return; }
     if (v.pathPos >= v.path.length - 1) { arriveVehicle(v); return; }
 
     if (v.nextIdx == null) {
       const ni = v.path[v.pathPos + 1];
-      if (!road[ni]) { timeoutVehicle(v); return; }
+      if (!road[ni]) { handleBlockedVehicle(v); return; }
+      const prevIdx = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
+      if (wouldUTurn(prevIdx, v.currentIdx, ni) && !canUTurnAtForVehicle(v, v.currentIdx, prevIdx)) {
+        waitLoad[v.currentIdx] += realDt * 4;
+        v.waitingGameMin += gameMinDt;
+        if (tryReroute(v, true)) return;
+        if (!v.uTurnBlockedAlerted || game.worldMin - v.uTurnBlockedAlerted > 60) {
+          v.uTurnBlockedAlerted = game.worldMin;
+          addAlert('กลับรถไม่ได้', 'รถจะไม่กลับรถกลางถนน ระบบกำลังหาเส้นทางไป 4 แยก/ปลายถนนแทน', 1, 'warn');
+        }
+        if (v.waitingGameMin > 12) rerouteVehicleHomeOrExit(v, 'กลับรถไม่ได้');
+        return;
+      }
       const dirKey = moveDirKey(v.currentIdx, ni);
       if (!canEnterCell(ni, v.id, dirKey)) {
         waitLoad[v.currentIdx] += realDt * 4;
@@ -1289,7 +2147,12 @@
 
     const nr = roadDataById(road[v.nextIdx]) || rd || DATA.roads.small;
     const ratio = getRoadRatio(v.nextIdx);
-    const slow = ratio <= 0.6 ? 1 : ratio <= 1.2 ? 1 / (1 + (ratio - 0.6) * 1.2) : 0.35;
+    let slow = 1;
+    if (ratio > 1.55) slow = 0.06;
+    else if (ratio > 1.20) slow = 0.14;
+    else if (ratio > 0.95) slow = 0.28;
+    else if (ratio > 0.70) slow = 0.48;
+    else if (ratio > 0.45) slow = 0.72;
     const speed = nr.speed * game.speed * slow;
     v.t += realDt * speed;
     if (v.t >= 1) {
@@ -1298,10 +2161,8 @@
       v.pathPos++;
       v.nextIdx = null;
       v.t = 0;
-      if (v.waitingGameMin > 30 && !v.rerouteCooldown) {
-        tryReroute(v);
-        v.rerouteCooldown = game.worldMin + 10;
-        v.waitingGameMin = 0;
+      if (v.waitingGameMin > 18) {
+        tryReroute(v, false);
       }
     }
   }
@@ -1311,18 +2172,23 @@
     return moveAxis(from, to) !== signalPhase(to);
   }
 
-  function tryReroute(v) {
-    if (v.rerouteCooldown && game.worldMin < v.rerouteCooldown) return;
+  function tryReroute(v, force = false) {
+    if (!force && v.rerouteCooldown && game.worldMin < v.rerouteCooldown) return false;
     const dest = v.path[v.path.length - 1];
     clearNextCell(v);
-    const path = findPath(v.currentIdx, dest, true);
-    if (path.length && path.length < Math.max(2, v.path.length - v.pathPos + 6)) {
-      v.path = path;
-      v.pathPos = 0;
-      v.t = 0;
-      v.nextIdx = null;
-      v.rerouted = true;
-    }
+    const initialPrev = currentLegalInitialPrev(v);
+    const oldRemaining = Math.max(1, v.path.length - v.pathPos);
+    const oldNext = v.path[v.pathPos + 1];
+    const oldNextBlocked = oldNext != null && !road[oldNext];
+    const oldNextIllegalUTurn = oldNext != null && wouldUTurn(initialPrev, v.currentIdx, oldNext) && !canUTurnAtForVehicle(v, v.currentIdx, initialPrev);
+    const path = findPath(v.currentIdx, dest, true, { initialPrev, allowDeadEndUTurn: true });
+    if (!path.length || samePathFromCurrent(v, path)) return false;
+
+    // ถ้าเส้นทางเดิมตัน/ต้องกลับรถผิดจุด ให้รับเส้นทางใหม่ทันที แม้จะยาวกว่าเล็กน้อย
+    // ถ้าเป็น reroute จากรถติด ให้รับเฉพาะเส้นทางที่ไม่ยาวเกินไป เพื่อไม่ให้รถวิ่งอ้อมมั่ว
+    const acceptable = force || oldNextBlocked || oldNextIllegalUTurn || path.length <= oldRemaining + 14 || (v.waitingGameMin > 10 && path.length <= oldRemaining + 28);
+    if (!acceptable) return false;
+    return applyVehiclePath(v, path, 'reroute');
   }
 
   function arriveVehicle(v) {
@@ -1345,13 +2211,15 @@
         c.location = `building:${b.id}`;
         c.state = 'อยู่บ้าน';
         assignJobFor(c);
+        if (game.worldMin > v.deadline) c.satisfaction -= 8;
         scheduleCitizenDay(c, absDay());
       }
     } else if (v.type === 'WorkTrip') {
       if (b) b.arrivals++;
       c.location = `building:${b.id}`;
-      c.state = 'อยู่ที่ทำงาน';
-      c.satisfaction = Math.min(100, c.satisfaction + 2);
+      c.state = game.worldMin > v.deadline ? 'อยู่ที่ทำงาน (มาสาย)' : 'อยู่ที่ทำงาน';
+      if (game.worldMin > v.deadline && b) b.delayed = (b.delayed || 0) + 1;
+      c.satisfaction = Math.min(100, c.satisfaction + (game.worldMin > v.deadline ? -6 : 2));
     } else if (v.type === 'LeisureTrip') {
       if (b) {
         b.reservedService = Math.max(0, b.reservedService - 1);
@@ -1359,8 +2227,10 @@
         b.arrivals++;
         c.location = `building:${b.id}`;
         c.state = `อยู่${kindName(b.kind)}`;
-        c.satisfaction = Math.min(100, c.satisfaction + 7);
-        pushEvent(v.activityEnd || game.worldMin + 120, 'returnHome', { citizenId: c.id, reason: 'จบกิจกรรม' });
+        if (game.worldMin > v.deadline && b) b.delayed = (b.delayed || 0) + 1;
+        c.satisfaction = Math.min(100, c.satisfaction + (game.worldMin > v.deadline ? -6 : 7));
+        const leaveAt = game.worldMin > (v.activityEnd || 0) ? game.worldMin + 45 : (v.activityEnd || game.worldMin + 120);
+        pushEvent(leaveAt, 'returnHome', { citizenId: c.id, reason: 'จบกิจกรรม' });
       }
     } else if (v.type === 'ReturnHomeTrip') {
       if (b) b.arrivals++;
@@ -1427,7 +2297,9 @@
     const businessTax = buildings.reduce((s, b) => s + b.employees * 50, 0);
     const maintenance = computeRoadMaintenance() + buildings.reduce((s,b)=>s+buildingType(b).maintenance,0);
     const activeTrips = vehicles.length;
-    return { population, movingIn, unemployed, jobVac, avgSat, trafficFlow, residentTax, businessTax, maintenance, activeTrips };
+    const demandRows = computeDemandSummary();
+    const demandShortage = demandRows.reduce((sum, d) => sum + Math.max(0, d.shortage || 0), 0);
+    return { population, movingIn, unemployed, jobVac, avgSat, trafficFlow, residentTax, businessTax, maintenance, activeTrips, demandShortage };
   }
 
   function renderStats() {
@@ -1440,6 +2312,7 @@
       { icon:'📈', label:'สุทธิ/วัน', value:`${net >= 0 ? '+' : ''}${formatMoney(net)}`, cls:net >= 0 ? 'good' : 'bad' },
       { icon:'👥', label:'ประชากร', value:formatMoney(s.population), cls:s.population ? 'good' : 'warn', inspect:'population' },
       { icon:'😊', label:'ความสุข', value:`${Math.round(s.avgSat)}%`, cls:kpiState(s.avgSat, 75, 45), inspect:'happiness' },
+      { icon:'📣', label:'ความต้องการ', value:s.demandShortage ? `${formatCompact(s.demandShortage)} คน` : '0', cls:s.demandShortage ? 'warn' : 'good', inspect:'demand' },
       { icon:'🚗', label:'Traffic Flow', value:`${Math.round(s.trafficFlow)}%`, cls:kpiState(s.trafficFlow, 70, 40) },
     ];
     statsEl.innerHTML = rows.map(r => `<div class="stat ${r.cls || ''} ${r.inspect ? 'clickable' : ''}" ${r.inspect ? `data-inspect="${r.inspect}"` : ''}><span class="label">${r.icon} ${r.label}</span><b>${r.value}</b></div>`).join('');
@@ -1477,6 +2350,89 @@
       <div class="vacancy-list">${vacancies.length ? vacancies.map(x => `<div class="vacancy-item"><b>${escapeHtml(x.t.name)} #${x.b.id}</b><br><span class="muted">ตำแหน่งว่าง ${x.free}/${x.t.jobs} • พิกัด ${x.b.x}, ${x.b.y}</span></div>`).join('') : '<div class="muted">ยังไม่มีงานว่าง หรือยังไม่มีอาคารงาน</div>'}</div>`;
   }
 
+  function computeDemandSummary() {
+    const residents = citizens.filter(c => c.resident && !c.removed && !c.movingOut);
+    const rows = [];
+    const workers = residents.filter(c => c.profile.workDays.length);
+    const unemployed = workers.filter(c => !c.workId).length;
+    const jobCap = buildings.reduce((sum,b)=>sum+buildingType(b).jobs,0);
+    const jobsUsed = buildings.reduce((sum,b)=>sum+b.employees,0);
+    if (unemployed > 0) rows.push({ key:'job', label:'งาน', icon:'🏢', need:workers.length, capacity:jobCap, used:jobsUsed, shortage:unemployed, detail:`คนว่างงาน ${unemployed} คนจากคนที่ต้องทำงาน ${workers.length} คน` });
+
+    const serviceDemand = new Map([['shop',0],['restaurant',0],['mall',0],['park',0],['pub',0]]);
+    const wd = weekday();
+    for (const c of residents) {
+      const p = c.profile;
+      if (p.trait === 'บ้านรวย') {
+        const kind = ['mall','restaurant','pub'][c.id % 3];
+        serviceDemand.set(kind, (serviceDemand.get(kind)||0) + 1);
+      } else if (p.workDays.includes(wd)) {
+        if (p.afterWork && (p.trait !== 'ขยัน' || c.id % 6 === 0)) serviceDemand.set(p.afterWork, (serviceDemand.get(p.afterWork)||0) + 1);
+      } else if (p.weekendKind) {
+        serviceDemand.set(p.weekendKind, (serviceDemand.get(p.weekendKind)||0) + 1);
+      }
+    }
+    for (const [kind, need] of serviceDemand.entries()) {
+      if (!need) continue;
+      const bs = buildings.filter(b => buildingType(b).kind === kind);
+      const capacity = bs.reduce((sum,b)=>sum+buildingType(b).service,0);
+      const used = bs.reduce((sum,b)=>sum+b.visitors+b.reservedService,0);
+      const shortage = Math.max(0, need - capacity);
+      rows.push({
+        key: kind,
+        label: kindName(kind),
+        icon: ({shop:'🛒',restaurant:'🍜',mall:'🏬',park:'🌳',pub:'🎵'})[kind] || '📍',
+        need,
+        capacity,
+        used,
+        shortage,
+        detail: shortage > 0 ? `ต้องการ${kindName(kind)} ${need} คน แต่รองรับได้ ${capacity} คน ขาด ${shortage} คน` : `ต้องการ${kindName(kind)} ${need} คน รองรับได้ ${capacity} คน`
+      });
+    }
+
+    const vacantHomeCap = buildings.reduce((sum,b)=>{
+      const t = buildingType(b);
+      if (t.kind !== 'home') return sum;
+      return sum + Math.max(0, t.residents - actualResidentsInBuilding(b) - b.reservedResidents);
+    },0);
+    if (vacantHomeCap <= 0 && gates.some(g => g.entrance != null)) rows.push({ key:'home', label:'บ้าน', icon:'🏠', need:1, capacity:0, used:0, shortage:1, detail:'บ้านว่างไม่พอสำหรับคนย้ายเข้าใหม่' });
+    if (!gates.some(g => g.entrance != null)) rows.push({ key:'gateRoad', label:'ถนนเข้าเมือง', icon:'🛣️', need:1, capacity:0, used:0, shortage:1, detail:'ยังไม่มีถนนเชื่อม Gate เข้าเมือง คนย้ายเข้าและรถผ่านเมืองเข้าไม่ได้' });
+
+    // รวมเหตุการณ์ Demand ที่เกิดขึ้นจริงวันนี้จาก Alert เพื่อไม่ให้ปัญหาที่เพิ่งเกิดหายไปจาก Dashboard
+    const today = absDay();
+    const alertDemand = new Map();
+    for (const a of alerts) {
+      if (Math.floor(a.t / 1440) !== today) continue;
+      if (!a.title.startsWith('ต้องการ')) continue;
+      const label = a.title.replace('ต้องการ','');
+      alertDemand.set(label, (alertDemand.get(label)||0) + a.count);
+    }
+    for (const [label, count] of alertDemand.entries()) {
+      const existing = rows.find(r => r.label === label);
+      if (existing) existing.shortage = Math.max(existing.shortage, count);
+      else rows.push({ key:`alert-${label}`, label, icon:'⚠️', need:count, capacity:0, used:0, shortage:count, detail:`มี Demand เกิดขึ้นจริงจาก Simulation ${count} คน` });
+    }
+    return rows.sort((a,b)=>(b.shortage-a.shortage) || (b.need-a.need));
+  }
+
+  function inspectDemandSummary() {
+    const rows = computeDemandSummary();
+    const totalShortage = rows.reduce((sum,r)=>sum+Math.max(0,r.shortage||0),0);
+    const cards = rows.length ? rows.map(r => {
+      const pct = r.need ? clamp((r.capacity / Math.max(1, r.need)) * 100, 0, 100) : 0;
+      const bad = r.shortage > 0;
+      return `<div class="breakdown-row demand-row ${bad ? 'bad-demand' : 'good-demand'}"><b><span>${r.icon} ต้องการ${escapeHtml(r.label)}</span><span>${bad ? `ขาด ${formatCompact(r.shortage)} คน` : 'พอ'}</span></b><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="muted" style="margin-top:5px">${escapeHtml(r.detail)} • ใช้งาน/จองตอนนี้ ${formatCompact(r.used||0)}</div></div>`;
+    }).join('') : '<div class="card muted">✅ ตอนนี้ยังไม่มี Demand หลัก</div>';
+    selectionEl.innerHTML = `<div class="inspector-title">📣 แดชบอร์ดความต้องการ</div>
+      <div class="muted">สรุปจากตารางชีวิต Citizen, Capacity อาคาร, งานว่าง และ Alert ที่เกิดจริงใน Simulation</div>
+      <div class="metric-grid">
+        ${toolMetric('ความต้องการที่ยังขาด', `${formatCompact(totalShortage)} คน`)}
+        ${toolMetric('รายการ Demand', `${rows.length} รายการ`)}
+      </div>
+      <div class="panel-subtitle">รายการที่เมืองต้องการ</div>
+      <div class="breakdown-list">${cards}</div>`;
+  }
+
   function inspectHappinessSummary() {
     const residents = citizens.filter(c => c.resident && !c.removed);
     const s = game.lastStats || computeStats();
@@ -1489,14 +2445,14 @@
     const serviceCap = buildings.reduce((sum,b)=>sum+buildingType(b).service,0);
     const serviceUse = buildings.reduce((sum,b)=>sum+b.visitors,0);
     const servicePct = serviceCap ? Math.round(serviceUse / serviceCap * 100) : 0;
-    const todayFail = buildings.reduce((sum,b)=>sum+b.fails,0);
+    const todayFail = buildings.reduce((sum,b)=>sum+(b.delayed||0),0);
     const todayArrive = buildings.reduce((sum,b)=>sum+b.arrivals,0);
     const rows = [
       ['ค่าเฉลี่ยความสุขจริง', Math.round(avg), 'ค่าเฉลี่ยจาก Citizen ทุกคนที่เป็นประชากรแล้ว'],
       ['งานและรายได้', employedPct, `ว่างงาน ${s.unemployed} คน จากคนที่ต้องทำงาน ${workers.length} คน`],
       ['การเดินทาง', Math.round(s.trafficFlow), 'อิงจาก Traffic Flow และความหนาแน่นถนน'],
       ['บริการ/กิจกรรม', serviceCap ? clamp(100 - Math.max(0, serviceUse-serviceCap) * 2, 0, 100) : 30, serviceCap ? `กำลังใช้บริการ ${serviceUse}/${serviceCap}` : 'ยังไม่มีอาคารบริการเพียงพอ'],
-      ['Trip วันนี้', todayArrive + todayFail ? Math.round(todayArrive / Math.max(1, todayArrive + todayFail) * 100) : 100, `ถึงปลายทาง ${todayArrive} • Fail ${todayFail}`]
+      ['Trip วันนี้', todayArrive + todayFail ? Math.round(todayArrive / Math.max(1, todayArrive + todayFail) * 100) : 100, `ถึงปลายทาง ${todayArrive} • ล่าช้า ${todayFail}`]
     ];
     selectionEl.innerHTML = `<div class="inspector-title">😊 สรุปความสุขเมือง</div>
       <div class="muted">ความสุขหลักมาจาก Citizen Satisfaction จริง และแยกสาเหตุเพื่อให้ดูง่าย</div>
@@ -1508,7 +2464,21 @@
       </div>
       <div class="panel-subtitle">ความพอใจมาจากอะไร</div>
       <div class="breakdown-list">${rows.map(([name,pct,detail]) => `<div class="breakdown-row"><b><span>${name}</span><span>${Math.round(pct)}%</span></b><div class="bar-track"><div class="bar-fill" style="width:${clamp(pct,0,100)}%"></div></div><div class="muted" style="margin-top:5px">${escapeHtml(detail)}</div></div>`).join('')}</div>
-      <div class="muted" style="margin-top:8px">สิ่งที่มักทำให้ความสุขลด: ไม่มีงาน, ไม่มีปลายทางกิจกรรม, Trip Timeout, ถนนติดจนกลับบ้าน/ไปทำงานไม่ทัน</div>`;
+      <div class="muted" style="margin-top:8px">สิ่งที่มักทำให้ความสุขลด: ไม่มีงาน, ไม่มีปลายทางกิจกรรม, เดินทางล่าช้า, ถนนติดจนกลับบ้าน/ไปทำงานช้า</div>`;
+  }
+
+
+  function inspectHappinessGuide() {
+    selectionEl.innerHTML = `<div class="inspector-title">📘 ไกด์เงื่อนไขความสุข</div>
+      <div class="muted">ระบบนี้ไม่มี Trip Fail แล้ว ถ้าไปสายหรือรถค้างจะไม่เด้งกลับบ้านทันที แต่จะลดความสุขแทน</div>
+      <div class="breakdown-list">
+        <div class="breakdown-row"><b><span>✅ งานพอและมีถนนถึงที่ทำงาน</span><span>สำคัญมาก</span></b><div class="muted">คนที่ต้องทำงานแต่ไม่มีงาน หรือถนนไปที่ทำงานไม่ได้ จะลดความสุขและอาจย้ายออกในระยะยาว</div></div>
+        <div class="breakdown-row"><b><span>🚗 เดินทางตรงเวลา</span><span>ลดเมื่อสาย</span></b><div class="muted">ถนนติดไม่ตัด Trip แล้ว แต่ถ้าเลยเวลานัด ความสุขลดทันที และลดเพิ่มทุก ๆ ประมาณ 1 ชั่วโมงเกมระหว่างยังไม่ถึง</div></div>
+        <div class="breakdown-row"><b><span>🍜 มีปลายทางตามอุปนิสัย</span><span>ร้าน/ห้าง/สวน/ผับ</span></b><div class="muted">ถ้าไม่มีอาคารหรือ Capacity เต็ม ระบบจะไม่ปล่อยรถมั่ว แต่จะสร้าง Demand และหักความสุข</div></div>
+        <div class="breakdown-row"><b><span>🏠 กลับบ้านได้</span><span>พื้นฐาน</span></b><div class="muted">ถนนหน้าบ้านหรือเส้นทางกลับบ้านขาด จะทำให้รถค้างและความสุขลดลง</div></div>
+        <div class="breakdown-row"><b><span>📈 เกณฑ์ย้ายเข้า</span><span>ต้อง ≥ 80%</span></b><div class="muted">ถ้าความสุขเฉลี่ยต่ำกว่า 80% ประชากรใหม่จะหยุดย้ายเข้า จนกว่าจะปรับเมืองให้ดีขึ้น</div></div>
+        <div class="breakdown-row"><b><span>🚪 ทางเข้าอาคาร</span><span>ต้องเข้าถูกเลน</span></b><div class="muted">รถเข้าอาคารจากเลนฝั่งที่อาคารติดอยู่เท่านั้น ไม่สามารถเข้าจากเลนสวนหรือเลนฝั่งตรงข้ามได้</div></div>
+      </div>`;
   }
 
   function renderAlerts() {
@@ -1832,6 +2802,40 @@
   function isJunctionCell(i) {
     return road[i] && connCache[i] >= 3;
   }
+  function isFourWayJunctionCell(i) {
+    // ใช้จำนวนทางเชื่อมจริงจาก roadLinks แทน connCache เพื่อกัน cache เพี้ยนหลังแก้/ลบถนน
+    return !!(road[i] && roadDegree(i) >= 4);
+  }
+  function isRoadEndCell(i) {
+    // ปลายถนน/ทางตัน ให้กลับรถได้ เพื่อไม่ให้รถค้างถาวรเมื่อผู้เล่นสร้างทางตันหรือเพิ่งตัดถนน
+    return !!(road[i] && roadDegree(i) <= 1);
+  }
+  function canUTurnAt(i) {
+    return isFourWayJunctionCell(i) || isRoadEndCell(i);
+  }
+  function canUTurnAtForPath(cur, prev, opts = {}) {
+    if (!road[cur]) return false;
+    if (canUTurnAt(cur)) return true;
+    if (opts.allowDeadEndUTurn && prev != null && prev >= 0) {
+      const choices = linkedNeighbors(cur).filter(n => n !== prev && road[n]);
+      if (choices.length === 0) return true;
+    }
+    return false;
+  }
+  function canUTurnAtForVehicle(v, cur, prev) {
+    if (!road[cur]) return false;
+    if (canUTurnAt(cur)) return true;
+    if (prev != null && prev >= 0) {
+      const choices = linkedNeighbors(cur).filter(n => n !== prev && road[n]);
+      if (choices.length === 0) return true;
+      const planned = v && v.path ? v.path[v.pathPos + 1] : null;
+      if (planned != null && !road[planned] && choices.length === 0) return true;
+    }
+    return false;
+  }
+  function wouldUTurn(prev, cur, next) {
+    return prev != null && next === prev;
+  }
   function signalPhase(i) {
     // Each junction has a deterministic offset so every red light does not switch at the exact same moment.
     const offset = (i * 7) % 11;
@@ -1941,16 +2945,11 @@
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    const maxW = Math.min(bw - 4, Math.max(...lines.map(x => ctx.measureText(x).width)) + 10);
-    const boxH = lines.length * (fs + 2) + 7;
-    const bx = sx + bw/2 - maxW/2;
-    const by = sy + Math.max(3, Math.min(bh - boxH - 3, 4));
-    ctx.fillStyle = 'rgba(255,255,255,.96)';
-    roundRect(ctx, bx, by, maxW, boxH, 4); ctx.fill();
-    ctx.strokeStyle = 'rgba(15,23,42,.10)'; ctx.lineWidth = 1; ctx.stroke();
+    const totalH = lines.length * (fs + 2);
+    const startY = sy + Math.max(fs + 3, Math.min(bh - totalH - 2, 5)) + fs/2;
     for (let i = 0; i < lines.length; i++) {
-      ctx.fillStyle = i === 0 ? '#111827' : '#334155';
-      ctx.fillText(lines[i], sx + bw/2, by + 7 + fs/2 + i * (fs + 2));
+      ctx.fillStyle = i === 0 ? '#0f172a' : '#1f2937';
+      ctx.fillText(lines[i], sx + bw/2, startY + i * (fs + 2));
     }
     ctx.restore();
   }
@@ -2044,6 +3043,11 @@
       const laneOffset = vehicleLaneOffset(v, laneCell, rw);
       sx += -Math.sin(angle) * laneOffset;
       sy += Math.cos(angle) * laneOffset;
+      // 1 Grid รองรับรถได้ 3 คันต่อเลน: วางรถเหลื่อมตามแนววิ่ง ไม่ซ้อนทับกันกลางช่อง
+      const gridSlot = clamp(vehicleGridSlot(v, laneCell), 0, CARS_PER_GRID - 1);
+      const alongOffset = (gridSlot - (CARS_PER_GRID - 1) / 2) * zt * 0.24;
+      sx += Math.cos(angle) * alongOffset;
+      sy += Math.sin(angle) * alongOffset;
       if (sx < -30 || sy < -30 || sx > window.innerWidth + 30 || sy > window.innerHeight + 30) continue;
       drawCar(v, sx, sy, zt, angle, rw, road[laneCell] || road[v.currentIdx] || 1);
       if (game.debug && v.path.length) drawVehiclePath(v, zt);
@@ -2207,22 +3211,32 @@
   function buildToolButtons() {
     const groups = [];
     groups.push({ filter:'manage', title:'จัดการ', items:[
-      { type:'hand', key:'hand', name:'มือเปล่า', meta:'คลิก Inspect • คลิกขวา/ล้อกลางเพื่อลากแผนที่' },
+      { type:'hand', key:'hand', name:'มือเปล่า', meta:'คลิก Inspect • คลิกซ้ายลากแผนที่ • iPad ใช้นิ้วลาก/จีบซูม' },
       { type:'demolishRoad', key:'demolishRoad', name:'รื้อถนน', meta:'ค่ารื้อ 20% ของราคาถนนเดิม' }
     ] });
     groups.push({ filter:'road', title:'ถนน', items:Object.values(DATA.roads).map(r => ({ type:'road', key:r.key, name:r.name, meta:`${r.lanes} เลน • ${r.cost}/ช่อง • บำรุง ${r.maintenance}/วัน` })) });
 
-    const filterByCat = { 'บ้าน':'home', 'งาน':'job', 'อาคาร':'service', 'พักผ่อน':'leisure', 'กลางคืน':'night' };
-    const cats = {};
-    for (const b of Object.values(DATA.buildings)) {
-      cats[b.category] ??= [];
-      const cap = b.residents ? `คนอยู่ ${b.residents}` : b.service ? `บริการ ${b.service}` : `งาน ${b.jobs}`;
-      cats[b.category].push({ type:'building', key:b.key, name:b.name, meta:`${b.w}x${b.h} • ${formatMoney(b.cost)} • ${cap}` });
+    const buildingGroups = [
+      { filter:'home', title:'บ้าน', kinds:['home'] },
+      { filter:'job', title:'งาน', kinds:['office','factory'] },
+      { filter:'shop', title:'ร้านค้า', kinds:['shop'] },
+      { filter:'food', title:'ร้านอาหาร', kinds:['restaurant'] },
+      { filter:'mall', title:'ห้าง', kinds:['mall'] },
+      { filter:'leisure', title:'พักผ่อน', kinds:['park'] },
+      { filter:'night', title:'กลางคืน', kinds:['pub'] }
+    ];
+    for (const g of buildingGroups) {
+      const items = Object.values(DATA.buildings)
+        .filter(b => g.kinds.includes(b.kind))
+        .map(b => {
+          const cap = b.residents ? `คนอยู่ ${b.residents}` : b.service ? `บริการ ${b.service}` : `งาน ${b.jobs}`;
+          return { type:'building', key:b.key, name:b.name, meta:`${b.w}x${b.h} • ${formatMoney(b.cost)} • ${cap}` };
+        });
+      if (items.length) groups.push({ filter:g.filter, title:g.title, items });
     }
-    for (const [title, items] of Object.entries(cats)) groups.push({ filter:filterByCat[title] || 'service', title, items });
 
     const tabs = [
-      ['all','ทั้งหมด'], ['road','ถนน'], ['home','บ้าน'], ['job','งาน'], ['service','ร้าน/ห้าง'], ['leisure','พักผ่อน'], ['night','กลางคืน'], ['manage','จัดการ']
+      ['all','ทั้งหมด'], ['road','ถนน'], ['home','บ้าน'], ['job','งาน'], ['shop','ร้านค้า'], ['food','ร้านอาหาร'], ['mall','ห้าง'], ['leisure','พักผ่อน'], ['night','กลางคืน'], ['manage','จัดการ']
     ];
     toolListEl.innerHTML = `
       <div class="tool-tabs">
@@ -2242,7 +3256,10 @@
     const type = card.dataset.inspect;
     if (type === 'population') inspectPopulationSummary();
     else if (type === 'happiness') inspectHappinessSummary();
+    else if (type === 'demand') inspectDemandSummary();
   });
+
+  if (happinessGuideBtn) happinessGuideBtn.addEventListener('click', inspectHappinessGuide);
 
   toolListEl.addEventListener('click', (e) => {
       const tab = e.target.closest('.tool-tab');
@@ -2285,7 +3302,7 @@
   function toolMetric(label, value) { return `<div class="metric"><span>${label}</span><b>${value}</b></div>`; }
   function showToolInfo() {
     if (!game.selectedTool) {
-      selectionEl.innerHTML = '<div class="inspector-title">👆 มือเปล่า</div><div class="muted">คลิกถนน อาคาร Gate หรือรถ เพื่อดูรายละเอียดจาก Simulation จริง</div>';
+      selectionEl.innerHTML = '<div class="inspector-title">👆 มือเปล่า</div><div class="muted">คลิกถนน อาคาร Gate หรือรถ เพื่อดูรายละเอียด • คลิกซ้ายลากแผนที่ / iPad ใช้นิ้วลากและจีบซูม</div>';
       return;
     }
     const tool = game.selectedTool;
@@ -2298,6 +3315,7 @@
           ${toolMetric('บำรุง/วัน', `${r.maintenance} บาท`)}
           ${toolMetric('เลน', `${r.lanes} เลน`)}
           ${toolMetric('Capacity', `${r.capacity} คัน/ช่อง`)}
+          ${toolMetric('ช่องรถจริง', `${laneCapacityAtPreview(r.lanes)} คัน/กริด`)}
         </div>
         <div class="muted" style="margin-top:8px">คลิกจุดเริ่ม แล้วคลิกจุดปลาย ระบบ Snap 90°/45° ให้อัตโนมัติ</div>`;
     } else if (tool.type === 'building') {
@@ -2371,9 +3389,9 @@
         ${toolMetric('คนอยู่จริง', `${actualResidentsInBuilding(b)}/${t.residents || 0}${b.reservedResidents ? ` (+กำลังย้ายเข้า ${b.reservedResidents})` : ''}`)}
         ${toolMetric('คนทำงาน', `${b.employees}/${t.jobs}`)}
         ${toolMetric('ผู้ใช้บริการ', `${b.visitors}/${t.service}${b.reservedService ? ` (+จอง ${b.reservedService})` : ''}`)}
-        ${toolMetric('วันนี้', `ถึง ${b.arrivals} • Fail ${b.fails}`)}
+        ${toolMetric('วันนี้', `ถึง ${b.arrivals} • ล่าช้า ${b.delayed || 0}`)}
       </div>
-      <div class="muted" style="margin-top:8px">Entrance: ${xy(b.entrance).x}, ${xy(b.entrance).y} • อาคารนี้ถูกใช้โดย Trip/Capacity จริง</div>`;
+      <div class="muted" style="margin-top:8px">Entrance: ${xy(b.entrance).x}, ${xy(b.entrance).y} • เข้าอาคารจากถนนที่เชื่อมอยู่ (${b.entrySideKey || '-'}) • ถ้าฝั่งหลักติดบัค ระบบจะใช้ทางเชื่อมที่ใกล้สุด • อาคารนี้ถูกใช้โดย Trip/Capacity จริง</div>`;
   }
   function inspectRoad(x, y) {
     const i = idx(x,y);
@@ -2385,8 +3403,9 @@
     selectionEl.innerHTML = `<div class="inspector-title">🛣️ ถนน ${x}, ${y}</div>
       <div class="muted">${r.name} • ${r.lanes} เลน • ${connCache[i]>=3 ? 'ทางแยก 4 ขา/ไฟแดง' : 'ทางถนน'}</div>
       <div class="metric-grid">
-        ${toolMetric('รถบนช่อง', `${carsHere}/${r.lanes} คัน`)}
+        ${toolMetric('รถบนช่อง', `${carsHere}/${laneCapacityAt(i)} คัน`)}
         ${toolMetric('Capacity', `${r.capacity} คัน/ช่อง`)}
+        ${toolMetric('ช่องรถจริง', `${laneCapacityAt(i)} คัน/กริด`)}
         ${toolMetric('Traffic Ratio', ratio.toFixed(2))}
         ${toolMetric('สถานะ', `<span style="color:${trafficColor(ratio)}">${roadStatus(ratio)}</span>`)}
         ${toolMetric('ทางเชื่อม', `${connCache[i]} ขา`)}
@@ -2400,6 +3419,12 @@
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
+  function touchPoint(t) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+  function touchMid(a, b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }; }
+  function touchDist(a, b) { return Math.hypot(a.x-b.x, a.y-b.y); }
 
   canvas.addEventListener('mousemove', (e) => {
     const p = pointerPos(e);
@@ -2407,23 +3432,203 @@
     const g = screenToGrid(p.x, p.y);
     game.hover = inBounds(g.x, g.y) ? g : null;
     if (game.draggingPan) {
-      game.pan.x += p.x - game.mouseWorld.x;
-      game.pan.y += p.y - game.mouseWorld.y;
+      const dx = p.x - game.mouseWorld.x;
+      const dy = p.y - game.mouseWorld.y;
+      if (Math.abs(dx) + Math.abs(dy) > 0) {
+        game.pan.x += dx;
+        game.pan.y += dy;
+        if (Math.hypot(p.x - game.panStart.x, p.y - game.panStart.y) > 5) game.panMoved = true;
+      }
       game.mouseWorld = p;
     }
   });
+
   canvas.addEventListener('mousedown', (e) => {
     const p = pointerPos(e);
-    if (e.button === 1 || e.button === 2) {
-      game.draggingPan = true; game.mouseWorld = p; canvas.classList.add('dragging'); return;
+    // คอม: เลื่อนแมปด้วยคลิกขวาค้างแล้วลากเท่านั้น
+    // คลิกซ้ายใช้เลือก/วาง/ตรวจสอบ เพื่อไม่ให้ลากแมปชนกับการสร้างถนนหรือวางอาคาร
+    if (e.button === 2) {
+      game.draggingPan = true;
+      game.panMoved = false;
+      game.panStart = p;
+      game.mouseWorld = p;
+      canvas.classList.add('dragging');
+      e.preventDefault();
+      return;
     }
   });
-  window.addEventListener('mouseup', (e) => {
-    if (game.draggingPan) { game.draggingPan = false; canvas.classList.remove('dragging'); }
+
+  window.addEventListener('mouseup', () => {
+    if (game.draggingPan) {
+      if (game.panMoved) game.suppressClickUntil = performance.now() + 250;
+      game.draggingPan = false;
+      game.panMoved = false;
+      canvas.classList.remove('dragging');
+    }
   });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
+  canvas.addEventListener('touchstart', (e) => {
+    if (!e.touches.length) return;
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      const p = touchPoint(e.touches[0]);
+      const g = screenToGrid(p.x, p.y);
+      game.lastMouse = p;
+      game.hover = inBounds(g.x, g.y) ? g : null;
+      const tool = game.selectedTool;
+      if (tool && (tool.type === 'road' || tool.type === 'demolishRoad')) {
+        game.touchMode = 'buildLine';
+        game.touchLast = p;
+        game.touchBuildStart = game.hover;
+        game.touchBuildCurrent = game.hover;
+        game.roadStart = game.hover;
+        game.panMoved = false;
+        setStatus(tool.type === 'road' ? 'iPad: ลากนิ้วเพื่อวางถนน แล้วปล่อยนิ้วเพื่อสร้าง' : 'iPad: ลากนิ้วเพื่อเลือกรื้อถนน แล้วปล่อยนิ้วเพื่อรื้อ');
+        canvas.classList.add('dragging');
+        return;
+      }
+      if (tool && tool.type === 'building') {
+        game.touchMode = 'buildTap';
+        game.touchLast = p;
+        game.touchBuildStart = game.hover;
+        game.touchBuildCurrent = game.hover;
+        game.panMoved = false;
+        setStatus('iPad: แตะตำแหน่งบนแผนที่เพื่อวางอาคาร');
+        return;
+      }
+      // iPad/มือถือ: 1 นิ้วใช้แตะตรวจสอบเท่านั้น ไม่ลากแมป
+      // การเลื่อนแมปให้ใช้ 2 นิ้วลาก ส่วนจีบ 2 นิ้วยังใช้ซูมเหมือนเดิม
+      game.touchMode = 'inspectTap';
+      game.touchLast = p;
+      game.touchStart = p;
+      game.touchBuildCurrent = game.hover;
+      game.panStart = p;
+      game.panMoved = false;
+      setStatus('iPad: แตะเพื่อดูข้อมูล • ใช้ 2 นิ้วลากเพื่อเลื่อนแมป / จีบเพื่อซูม');
+    } else {
+      const a = touchPoint(e.touches[0]);
+      const b = touchPoint(e.touches[1]);
+      game.touchMode = 'pinch';
+      game.touchLast = touchMid(a, b);
+      game.touchDist = touchDist(a, b);
+      game.touchZoom = game.zoom;
+      game.panMoved = true;
+      game.roadStart = null;
+      game.touchBuildStart = null;
+      canvas.classList.add('dragging');
+    }
+  }, { passive:false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (!game.touchMode) return;
+    e.preventDefault();
+    if ((game.touchMode === 'buildLine' || game.touchMode === 'buildTap') && e.touches.length === 1) {
+      const p = touchPoint(e.touches[0]);
+      game.touchLast = p;
+      game.lastMouse = p;
+      const g = screenToGrid(p.x, p.y);
+      game.hover = inBounds(g.x, g.y) ? g : null;
+      game.touchBuildCurrent = game.hover;
+      return;
+    }
+    if ((game.touchMode === 'inspectTap' || game.touchMode === 'postGesture') && e.touches.length === 1) {
+      const p = touchPoint(e.touches[0]);
+      if (game.panStart && Math.hypot(p.x - game.panStart.x, p.y - game.panStart.y) > 8) game.panMoved = true;
+      game.touchLast = p;
+      game.lastMouse = p;
+      const g = screenToGrid(p.x, p.y);
+      game.hover = inBounds(g.x, g.y) ? g : null;
+      game.touchBuildCurrent = game.hover;
+      return;
+    }
+    if (e.touches.length >= 2) {
+      const a = touchPoint(e.touches[0]);
+      const b = touchPoint(e.touches[1]);
+      const mid = touchMid(a, b);
+      game.pan.x += mid.x - game.touchLast.x;
+      game.pan.y += mid.y - game.touchLast.y;
+      const before = screenToWorld(mid.x, mid.y);
+      const factor = touchDist(a, b) / Math.max(1, game.touchDist || 1);
+      game.zoom = clamp(game.touchZoom * factor, 0.22, 5.2);
+      const after = screenToWorld(mid.x, mid.y);
+      game.pan.x += (after.x - before.x) * TILE * game.zoom;
+      game.pan.y += (after.y - before.y) * TILE * game.zoom;
+      game.touchLast = mid;
+      game.panMoved = true;
+    }
+  }, { passive:false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      const mode = game.touchMode;
+      const tool = game.selectedTool;
+      if (mode === 'buildLine' && tool && game.touchBuildStart && game.touchBuildCurrent) {
+        const start = game.touchBuildStart;
+        const end = game.touchBuildCurrent;
+        const cells = getLineCells(start.x, start.y, end.x, end.y);
+        if (tool.type === 'road') {
+          const valid = canAddRoadCells(cells);
+          const cost = estimateRoadCost(cells, tool.key);
+          if (!valid.ok) setStatus(`สร้างไม่ได้: ${valid.reason}`);
+          else if (!canSpend(cost)) setStatus('สร้างไม่ได้: เงินไม่พอหรือกำลังติดลบ');
+          else { placeRoadCells(cells, tool.key, true); setStatus(`สร้าง/อัปเกรดถนน ${cells.length} ช่อง ราคา ${formatMoney(cost)} บาท`); }
+        } else if (tool.type === 'demolishRoad') {
+          let removed = 0;
+          for (const i of cells) { const p2 = xy(i); if (removeRoadCell(p2.x, p2.y, true)) removed++; }
+          setStatus(`รื้อถนน ${removed} ช่อง`);
+        }
+        updateToolButtons();
+        game.suppressClickUntil = performance.now() + 450;
+      } else if (mode === 'buildTap' && tool && tool.type === 'building' && game.touchBuildCurrent) {
+        const g = game.touchBuildCurrent;
+        const res = addBuilding(tool.key, g.x, g.y, true);
+        if (!res.ok) setStatus(`วางไม่ได้: ${res.reason}`);
+        updateToolButtons();
+        game.suppressClickUntil = performance.now() + 450;
+      } else if (mode === 'inspectTap' && !game.panMoved && game.touchBuildCurrent) {
+        const g = game.touchBuildCurrent;
+        inspectAt(g.x, g.y);
+        game.suppressClickUntil = performance.now() + 450;
+      } else if (game.panMoved || mode === 'postGesture' || mode === 'pinch') {
+        game.suppressClickUntil = performance.now() + 350;
+      }
+      game.touchMode = null;
+      game.touchLast = null;
+      game.touchBuildStart = null;
+      game.touchBuildCurrent = null;
+      game.roadStart = null;
+      game.panMoved = false;
+      canvas.classList.remove('dragging');
+    } else if (e.touches.length === 1) {
+      // หลังปล่อยจาก gesture 2 นิ้ว ไม่ให้กลายเป็นลากแมปด้วยนิ้วเดียวต่อ
+      const p = touchPoint(e.touches[0]);
+      game.touchMode = 'postGesture';
+      game.touchLast = p;
+      game.panStart = p;
+      game.panMoved = true;
+      game.roadStart = null;
+      game.touchBuildStart = null;
+      game.touchBuildCurrent = null;
+    }
+  }, { passive:false });
+
+
+
+  canvas.addEventListener('touchcancel', () => {
+    game.touchMode = null;
+    game.touchLast = null;
+    game.touchBuildStart = null;
+    game.touchBuildCurrent = null;
+    game.roadStart = null;
+    game.panMoved = false;
+    canvas.classList.remove('dragging');
+    setStatus('iPad: การแตะถูกยกเลิก ลองแตะ/ลากใหม่อีกครั้ง');
+  }, { passive:false });
+
   canvas.addEventListener('click', (e) => {
+    if (performance.now() < game.suppressClickUntil) return;
     if (e.button !== 0) return;
     const p = pointerPos(e);
     const g = screenToGrid(p.x, p.y);
@@ -2478,6 +3683,26 @@
     if (e.key === 'ArrowDown' || e.key === 's') game.pan.y -= step;
   });
 
+  function setPanelCollapsed(el, collapsed) {
+    if (!el) return;
+    el.classList.toggle('collapsed', collapsed);
+    const btn = el.querySelector(':scope > .collapse-btn');
+    if (btn) btn.textContent = collapsed ? '+' : '−';
+  }
+  document.querySelectorAll('.collapse-btn').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const el = document.getElementById(btn.dataset.collapseTarget);
+    setPanelCollapsed(el, !el.classList.contains('collapsed'));
+  }));
+  const coarseUi = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const iPadLike = /iPad|iPhone|Android/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const touchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (coarseUi || iPadLike || touchDevice) {
+    setPanelCollapsed(document.getElementById('leftPanel'), true);
+    setPanelCollapsed(document.getElementById('rightPanel'), true);
+  }
+
   document.querySelectorAll('.speedBtn').forEach(btn => btn.addEventListener('click', () => {
     game.speed = Number(btn.dataset.speed);
     game.skipMode = false;
@@ -2524,3 +3749,7 @@
   showToolInfo();
   requestAnimationFrame(loop);
 })();
+
+</script>
+</body>
+</html>
