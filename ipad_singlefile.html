@@ -2301,9 +2301,7 @@ canvas { touch-action: none; }
       <div class="breakdown-list">${rows.map(([name,pct,detail]) => `<div class="breakdown-row"><b><span>${name}</span><span>${Math.round(pct)}%</span></b><div class="bar-track"><div class="bar-fill" style="width:${clamp(pct,0,100)}%"></div></div><div class="muted" style="margin-top:5px">${escapeHtml(detail)}</div></div>`).join('')}</div>
       <div class="muted" style="margin-top:8px">สิ่งที่มักทำให้ความสุขลด: ไม่มีงาน, ไม่มีปลายทางกิจกรรม, เดินทางล่าช้า, ถนนติดจนกลับบ้าน/ไปทำงานช้า</div>`;
   }
-
-
-  function inspectHappinessGuide() {
+\n\n  function inspectHappinessGuide() {
     selectionEl.innerHTML = `<div class="inspector-title">📘 ไกด์เงื่อนไขความสุข</div>
       <div class="muted">ระบบนี้ไม่มี Trip Fail แล้ว ถ้าไปสายหรือรถค้างจะไม่เด้งกลับบ้านทันที แต่จะลดความสุขแทน</div>
       <div class="breakdown-list">
