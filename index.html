@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Traffic Fixer Thailand - Prototype</title>
+  <link rel="stylesheet" href="src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <header id="topbar">
+      <div class="brand">
+        <span class="logo">🚦</span>
+        <div>
+          <strong>Traffic Fixer Thailand</strong>
+          <small>Playable Prototype v0.1</small>
+        </div>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div class="top-actions">
+        <select id="citySelect" title="เลือกเมือง">
+          <option value="phuket">ภูเก็ต</option>
+          <option value="bangkok">กรุงเทพฯ</option>
+          <option value="chiangmai">เชียงใหม่</option>
+          <option value="korat">โคราช</option>
+        </select>
+        <button id="resetBtn">เริ่มเมืองใหม่</button>
+      </div>
+    </header>
+
+    <aside id="leftPanel" class="panel left">
+      <div class="panel-title">เครื่องมือสร้าง</div>
+      <div class="hint">เริ่มต้นเป็นมือเปล่า • ลากถนนแบบ 90°/45° • คลิกอาคารเพื่อวาง</div>
+      <div id="toolList"></div>
+    </aside>
+
+    <aside id="rightPanel" class="panel right">
+      <div class="panel-title">Inspector / Alerts</div>
+      <div id="selectionInfo" class="card">
+        <b>มือเปล่า</b><br>
+        คลิกถนน อาคาร Gate หรือรถ เพื่อดูสาเหตุปัญหา
+      </div>
+      <div class="panel-subtitle">Demand Alerts</div>
+      <div id="alerts"></div>
+    </aside>
+
+    <footer id="bottombar">
+      <button data-speed="0" class="speedBtn">Pause</button>
+      <button data-speed="1" class="speedBtn active">1x</button>
+      <button data-speed="2" class="speedBtn">2x</button>
+      <button data-speed="5" class="speedBtn">5x</button>
+      <button id="skipBtn">ข้ามไปวันถัดไป 06:00</button>
+      <button id="heatBtn">Traffic Heatmap: ปิด</button>
+      <button id="debugBtn">Debug Cell: ปิด</button>
+      <span id="statusText">พร้อมเล่น</span>
+    </footer>
+  </div>
+
+  <script src="src/main.js"></script>
+</body>
+</html>
