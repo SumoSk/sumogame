@@ -767,6 +767,9 @@ body, #app, canvas {
   const flowLoad = new Float32Array(MAP_SIZE);
   const waitLoad = new Float32Array(MAP_SIZE);
   const connCache = new Uint8Array(MAP_SIZE);
+  // Junction signal bookkeeping. The actual signal state is deterministic,
+  // but this helps debugging and prevents tiny Safari timer spikes from making cars jump.
+  const signalPassLoad = new Float32Array(MAP_SIZE);
 
   let buildings = [];
   let gates = [];
@@ -855,11 +858,13 @@ body, #app, canvas {
     const rd = roadDataById(t);
     const cap = Math.max(1, laneCapacityAt(i));
     const density = cellVehicleCount(i) / cap;
-    // ใช้ density เป็นตัวหลัก เพื่อให้รถเต็ม Grid แล้วเกิดแดง/ดำจริง
-    // flowLoad = รถผ่านเยอะ, waitLoad = รถรอไฟ/รอคิว ทำให้คอขวดติดสะสม
-    const flowPressure = flowLoad[i] / Math.max(1, rd.capacity) * 0.55;
-    const waitPressure = waitLoad[i] * 1.35;
-    return density * 1.28 + flowPressure + waitPressure;
+    // Pressure model v2: density is the main source of congestion.
+    // flowLoad and waitLoad are now soft signals only; the old model let red-light waiting
+    // inflate pressure so much that cars crawled forever and then rerouted into weird detours.
+    const flowPressure = Math.min(1.15, flowLoad[i] / Math.max(1, rd.capacity)) * 0.18;
+    const waitPressure = Math.min(2.2, waitLoad[i]) * 0.34;
+    const signalPressure = Math.min(1.2, signalPassLoad[i]) * 0.12;
+    return density * 1.08 + flowPressure + waitPressure + signalPressure;
   }
   function trafficColor(ratio) {
     if (ratio <= 0.60) return '#34d174';
@@ -1323,6 +1328,7 @@ body, #app, canvas {
     roadLinks = new Map();
     flowLoad.fill(0);
     waitLoad.fill(0);
+    signalPassLoad.fill(0);
     connCache.fill(0);
     buildings = [];
     gates = [];
@@ -1693,6 +1699,7 @@ body, #app, canvas {
   }
 
   function dailyTick() {
+    reconcileBuildingReservations();
     const stats = computeStats();
     const residentTax = citizens.filter(c => c.resident && !c.movingOut && !c.removed).reduce((s, c) => s + c.profile.tax, 0);
     const businessTax = buildings.reduce((s, b) => s + b.employees * 50, 0);
@@ -1948,14 +1955,17 @@ body, #app, canvas {
   }
 
   function findServiceBuilding(kind, fromIdx) {
+    reconcileBuildingReservations();
     let best = null, bestCost = Infinity;
     for (const b of buildings) {
       const t = buildingType(b);
       if (t.kind !== kind || t.service <= 0) continue;
-      if (b.visitors + b.reservedService >= t.service) continue;
-      const path = findPath(fromIdx, b.entrance, true);
+      const remaining = t.service - (b.visitors || 0) - (b.reservedService || 0);
+      if (remaining <= 0) continue;
+      const path = constrainedPathForTrip({ fromIdx, toIdx: b.entrance, destBuildingId: b.id, allowDeadEndUTurn: true, trafficAware: false });
       if (!path.length) continue;
-      const cost = path.length + (b.visitors / Math.max(1, t.service)) * 20;
+      const loadRatio = ((b.visitors || 0) + (b.reservedService || 0)) / Math.max(1, t.service);
+      const cost = path.length + countPathTurns(path) * 0.6 + loadRatio * 14;
       if (cost < bestCost) { bestCost = cost; best = b; }
     }
     return best;
@@ -2011,6 +2021,7 @@ body, #app, canvas {
       gateId: opts.gateId || null,
       targetGateId: opts.targetGateId || null,
       reservedService: !!opts.reservedService,
+      reserve: buildVehicleReservation(opts),
       activityEnd: opts.activityEnd || null,
       waitingGameMin: 0,
       lateAlerted: false,
@@ -2025,6 +2036,62 @@ body, #app, canvas {
     }
     return true;
   }
+
+  function buildVehicleReservation(opts) {
+    if (!opts || !opts.destBuildingId) return null;
+    if (opts.type === 'MoveInTrip') return { kind: 'resident', buildingId: opts.destBuildingId, active: true };
+    if (opts.reservedService) return { kind: 'service', buildingId: opts.destBuildingId, active: true };
+    return null;
+  }
+
+  function releaseVehicleReservation(v, reason = '') {
+    if (!v || !v.reserve || !v.reserve.active) return false;
+    const b = buildingById(v.reserve.buildingId);
+    if (b) {
+      if (v.reserve.kind === 'resident') b.reservedResidents = Math.max(0, (b.reservedResidents || 0) - 1);
+      if (v.reserve.kind === 'service') b.reservedService = Math.max(0, (b.reservedService || 0) - 1);
+    }
+    v.reserve.active = false;
+    v.reserve.reason = reason;
+    return true;
+  }
+
+  function fulfillVehicleReservation(v) {
+    // Success path: reservation is consumed by the arrival, so remove the reserved counter
+    // before adding the real resident/visitor count.
+    return releaseVehicleReservation(v, 'fulfilled');
+  }
+
+  function removeVehicleFromSimulation(v, reason = '', releaseReserve = true) {
+    if (!v) return false;
+    if (releaseReserve) releaseVehicleReservation(v, reason || 'removed');
+    clearNextCell(v);
+    releaseCell(v.currentIdx, v.id);
+    const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
+    if (c && c.currentVehicleId === v.id) c.currentVehicleId = null;
+    const vi = vehicles.indexOf(v);
+    if (vi >= 0) vehicles.splice(vi, 1);
+    return true;
+  }
+
+  function reconcileBuildingReservations() {
+    const residentHolds = new Map();
+    const serviceHolds = new Map();
+    for (const v of vehicles) {
+      if (!v.reserve || !v.reserve.active) continue;
+      const b = buildingById(v.reserve.buildingId);
+      if (!b) { v.reserve.active = false; continue; }
+      if (v.reserve.kind === 'resident') residentHolds.set(b.id, (residentHolds.get(b.id) || 0) + 1);
+      if (v.reserve.kind === 'service') serviceHolds.set(b.id, (serviceHolds.get(b.id) || 0) + 1);
+    }
+    for (const b of buildings) {
+      b.reservedResidents = residentHolds.get(b.id) || 0;
+      b.reservedService = serviceHolds.get(b.id) || 0;
+      const t = buildingType(b);
+      if (t.service > 0) b.visitors = clamp(b.visitors || 0, 0, t.service);
+    }
+  }
+
 
   function vehicleColor(type) {
     if (type === 'WorkTrip') return '#4aa3ff';
@@ -2141,11 +2208,11 @@ body, #app, canvas {
 
   function roadTravelCost(i, step, trafficAware = false) {
     const rd = roadDataById(road[i]) || DATA.roads.small;
-    // ระยะทางจริงมาก่อนเสมอ: ป้องกัน AI วิ่งอ้อมไปหาแต่ถนนใหญ่
-    // ถนนใหญ่ยังได้เปรียบเล็กน้อย แต่ไม่ถึงขั้นยอมอ้อมครึ่งเมือง
-    const laneFactor = rd.lanes >= 8 ? 0.86 : rd.lanes >= 4 ? 0.93 : 1.0;
-    const trafficPenalty = trafficAware ? Math.max(0, getRoadRatio(i) - 0.75) * 0.55 : 0;
-    const junctionPenalty = roadDegree(i) >= 3 ? 0.05 : 0;
+    // Route choice v3: distance stays king. Larger roads are only slightly cheaper,
+    // so AI will not take a huge loop just because it sees an 8-lane road.
+    const laneFactor = rd.lanes >= 8 ? 0.92 : rd.lanes >= 4 ? 0.96 : 1.0;
+    const trafficPenalty = trafficAware ? Math.max(0, getRoadRatio(i) - 0.95) * 0.28 : 0;
+    const junctionPenalty = isSignalControlledJunction(i) ? 0.10 : roadDegree(i) >= 3 ? 0.04 : 0;
     return step * laneFactor + trafficPenalty + junctionPenalty;
   }
 
@@ -2154,10 +2221,10 @@ body, #app, canvas {
     const a = xy(prev), b = xy(cur), c = xy(next);
     const dx1 = sign(b.x - a.x), dy1 = sign(b.y - a.y);
     const dx2 = sign(c.x - b.x), dy2 = sign(c.y - b.y);
-    if (dx1 === -dx2 && dy1 === -dy2) return 6.0; // U-turn ถูกกฎหมายก็ยังเป็นตัวเลือกสุดท้ายจริง ๆ
+    if (dx1 === -dx2 && dy1 === -dy2) return 22.0; // legal U-turn is last resort, not a normal route choice
     if (dx1 === dx2 && dy1 === dy2) return 0;
     const dot = dx1 * dx2 + dy1 * dy2;
-    return dot <= 0 ? 0.22 : 0.08;
+    return dot <= 0 ? 0.36 : 0.14;
   }
 
   function samePathFromCurrent(v, path) {
@@ -2229,6 +2296,23 @@ body, #app, canvas {
     const initialPrev = currentLegalInitialPrev(v);
     const c = v.citizenId ? citizens.find(x => x.id === v.citizenId) : null;
 
+    // คนที่กำลังย้ายเข้า ยังไม่มี "บ้านเดิม" ให้กลับ จึงต้องพยายามไปบ้านที่จองไว้ก่อน
+    // ถ้าไปไม่ได้จริง ๆ ให้คืนโควตาจองและลบ trip แทนการเปลี่ยนเป็น ReturnHomeTrip แบบมั่ว ๆ
+    if (c && !c.removed && v.type === 'MoveInTrip') {
+      const reservedHome = buildingById(v.destBuildingId || c.homeId);
+      if (reservedHome && reservedHome.entrance != null && road[reservedHome.entrance]) {
+        let path = constrainedPathForTrip({ fromIdx: v.currentIdx, toIdx: reservedHome.entrance, destBuildingId: reservedHome.id, initialPrev, allowDeadEndUTurn: true, trafficAware: false });
+        if (!path.length && canUTurnAtForVehicle(v, v.currentIdx, initialPrev)) {
+          path = constrainedPathForTrip({ fromIdx: v.currentIdx, toIdx: reservedHome.entrance, destBuildingId: reservedHome.id, initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true, trafficAware: false });
+        }
+        if (path.length) return applyVehiclePath(v, path, reason);
+      }
+      releaseVehicleReservation(v, 'move-in failed');
+      c.removed = true;
+      addAlert('คนย้ายเข้าถูกยกเลิก', 'รถย้ายเข้าไปบ้านที่จองไว้ไม่ได้ จึงคืนโควตาบ้านและนำออกจากระบบ', 1, 'warn');
+      return removeVehicleFromSimulation(v, 'move-in failed', false);
+    }
+
     if (c && !c.removed) {
       const home = buildingById(c.homeId);
       if (home && home.entrance != null && road[home.entrance]) {
@@ -2239,6 +2323,7 @@ body, #app, canvas {
           path = constrainedPathForTrip({ fromIdx: v.currentIdx, toIdx: home.entrance, destBuildingId: home.id, initialPrev, enforceNoUTurn: false, allowDeadEndUTurn: true, trafficAware: false });
         }
         if (path.length) {
+          releaseVehicleReservation(v, 'rerouted home');
           v.type = 'ReturnHomeTrip';
           v.destBuildingId = home.id;
           v.targetGateId = null;
@@ -2248,16 +2333,13 @@ body, #app, canvas {
           return applyVehiclePath(v, path, reason);
         }
       }
+      releaseVehicleReservation(v, 'route failed');
       c.satisfaction -= 4;
     }
 
     // รถผ่านเมืองหรือรถที่ไม่มีเจ้าของ ถ้าหลุดเส้นทางและไม่มีทางแก้ ให้ลบออกจาก simulation แทนการค้างถาวร
     if (!c || v.type === 'PassThroughTrip') {
-      releaseCell(v.currentIdx, v.id);
-      clearNextCell(v);
-      const vi = vehicles.indexOf(v);
-      if (vi >= 0) vehicles.splice(vi, 1);
-      return true;
+      return removeVehicleFromSimulation(v, reason, true);
     }
     return false;
   }
@@ -2303,8 +2385,8 @@ body, #app, canvas {
 
   function moveVehicle(v, realDt, gameMinDt) {
     const rd = roadDataById(road[v.currentIdx]);
-    if (rd) flowLoad[v.currentIdx] += realDt * 5;
-    // Drop-off node หน้าอาคาร: ถึงช่องถนนที่เชื่อมอาคารแล้วให้เข้าอาคารทันที ไม่ต้องพยายามกลับรถ/เปลี่ยนเลนหน้าอาคาร
+    if (rd) flowLoad[v.currentIdx] += realDt * 2.8;
+    // Drop-off node หน้าอาคาร: เข้าได้เฉพาะถ้าวิ่งมาถูกเลนตาม Building Access Point
     if (isAtBuildingDropoff(v)) { arriveVehicle(v); return; }
     if (v.pathPos >= v.path.length - 1) { arriveVehicle(v); return; }
 
@@ -2313,7 +2395,7 @@ body, #app, canvas {
       if (!road[ni]) { handleBlockedVehicle(v); return; }
       const prevIdx = v.pathPos > 0 ? v.path[v.pathPos - 1] : null;
       if (wouldUTurn(prevIdx, v.currentIdx, ni) && !canUTurnAtForVehicle(v, v.currentIdx, prevIdx)) {
-        waitLoad[v.currentIdx] += realDt * 4;
+        waitLoad[v.currentIdx] += realDt * 2.4;
         v.waitingGameMin += gameMinDt;
         if (tryReroute(v, true)) return;
         if (!v.uTurnBlockedAlerted || game.worldMin - v.uTurnBlockedAlerted > 60) {
@@ -2325,29 +2407,26 @@ body, #app, canvas {
       }
       const dirKey = moveDirKey(v.currentIdx, ni);
       if (!canEnterCell(ni, v.id, dirKey)) {
-        waitLoad[v.currentIdx] += realDt * 4;
+        waitLoad[v.currentIdx] += realDt * 2.6;
         v.waitingGameMin += gameMinDt;
+        if (v.waitingGameMin > 10) tryReroute(v, false);
         return;
       }
       if (isRedForMove(v.currentIdx, ni)) {
-        waitLoad[v.currentIdx] += realDt * 5;
+        waitLoad[v.currentIdx] += realDt * 2.8;
+        signalPassLoad[ni] += realDt * 1.4;
         v.waitingGameMin += gameMinDt;
         return;
       }
       occupyCell(ni, v.id, dirKey);
       v.nextIdx = ni;
       v.t = 0;
+      v.waitingGameMin = Math.max(0, v.waitingGameMin - gameMinDt * 0.6);
     }
 
     const nr = roadDataById(road[v.nextIdx]) || rd || DATA.roads.small;
     const ratio = getRoadRatio(v.nextIdx);
-    let slow = 1;
-    if (ratio > 1.55) slow = 0.06;
-    else if (ratio > 1.20) slow = 0.14;
-    else if (ratio > 0.95) slow = 0.28;
-    else if (ratio > 0.70) slow = 0.48;
-    else if (ratio > 0.45) slow = 0.72;
-    const speed = nr.speed * game.speed * slow;
+    const speed = vehicleTilesPerSecond(v, nr, ratio) * game.speed;
     v.t += realDt * speed;
     if (v.t >= 1) {
       releaseCell(v.currentIdx, v.id);
@@ -2355,15 +2434,38 @@ body, #app, canvas {
       v.pathPos++;
       v.nextIdx = null;
       v.t = 0;
+      if (isSignalControlledJunction(v.currentIdx)) signalPassLoad[v.currentIdx] += 0.35;
       if (v.waitingGameMin > 18) {
         tryReroute(v, false);
       }
     }
   }
 
+  function trafficSlowFactor(ratio) {
+    if (ratio <= 0.50) return 1.00;
+    if (ratio <= 0.80) return 0.82;
+    if (ratio <= 1.05) return 0.62;
+    if (ratio <= 1.35) return 0.42;
+    if (ratio <= 1.75) return 0.24;
+    return 0.12;
+  }
+
+  function vehicleTilesPerSecond(v, rd, ratio) {
+    // Speed v2: road type controls top speed, congestion smoothly reduces speed.
+    // It never drops to zero here; complete stop is handled by red lights/full cells only.
+    const base = rd.lanes >= 8 ? 4.4 : rd.lanes >= 4 ? 3.55 : 2.75;
+    let factor = trafficSlowFactor(ratio);
+    if (v && v.nextIdx != null && isSignalControlledJunction(v.nextIdx)) factor *= 0.82;
+    return Math.max(0.20, base * factor);
+  }
+
   function isRedForMove(from, to) {
-    if (!isJunctionCell(to)) return false;
-    return moveAxis(from, to) !== signalPhase(to);
+    if (!isSignalControlledJunction(to)) return false;
+    // Once a car is already inside a controlled junction, never trap it on a red while exiting.
+    if (isSignalControlledJunction(from)) return false;
+    const st = signalState(to);
+    if (st.allRed) return true;
+    return moveAxis(from, to) !== st.phase;
   }
 
   function tryReroute(v, force = false) {
@@ -2396,7 +2498,7 @@ body, #app, canvas {
     const b = v.destBuildingId ? buildingById(v.destBuildingId) : null;
     if (v.type === 'MoveInTrip') {
       if (b) {
-        b.reservedResidents = Math.max(0, b.reservedResidents - 1);
+        fulfillVehicleReservation(v);
         b.residents++;
         b.citizenIds.push(c.id);
         b.arrivals++;
@@ -2408,6 +2510,7 @@ body, #app, canvas {
         scheduleCitizenDay(c, absDay());
       }
     } else if (v.type === 'WorkTrip') {
+      releaseVehicleReservation(v, 'unexpected work arrival');
       if (b) b.arrivals++;
       c.location = `building:${b.id}`;
       c.state = game.worldMin > v.deadline ? 'อยู่ที่ทำงาน (มาสาย)' : 'อยู่ที่ทำงาน';
@@ -2415,7 +2518,7 @@ body, #app, canvas {
       c.satisfaction = Math.min(100, c.satisfaction + (game.worldMin > v.deadline ? -6 : 2));
     } else if (v.type === 'LeisureTrip') {
       if (b) {
-        b.reservedService = Math.max(0, b.reservedService - 1);
+        fulfillVehicleReservation(v);
         b.visitors++;
         b.arrivals++;
         c.location = `building:${b.id}`;
@@ -2426,11 +2529,13 @@ body, #app, canvas {
         pushEvent(leaveAt, 'returnHome', { citizenId: c.id, reason: 'จบกิจกรรม' });
       }
     } else if (v.type === 'ReturnHomeTrip') {
+      releaseVehicleReservation(v, 'returned home');
       if (b) b.arrivals++;
       c.location = `building:${c.homeId}`;
       c.state = 'อยู่บ้าน';
       c.satisfaction = Math.min(100, c.satisfaction + 1);
     } else if (v.type === 'MoveOutTrip') {
+      releaseVehicleReservation(v, 'move out');
       const home = buildingById(c.homeId);
       if (home) {
         home.residents = Math.max(0, home.residents - 1);
@@ -2449,12 +2554,16 @@ body, #app, canvas {
   }
 
   function decayTraffic(realDt) {
-    const decay = Math.pow(0.92, realDt * 4);
+    const flowDecay = Math.pow(0.90, realDt * 4);
+    const waitDecay = Math.pow(0.72, realDt * 4);
+    const signalDecay = Math.pow(0.76, realDt * 4);
     for (let i = 0; i < MAP_SIZE; i++) {
-      if (flowLoad[i] > 0.01) flowLoad[i] *= decay;
+      if (flowLoad[i] > 0.01) flowLoad[i] *= flowDecay;
       else flowLoad[i] = 0;
-      if (waitLoad[i] > 0.01) waitLoad[i] *= decay;
+      if (waitLoad[i] > 0.01) waitLoad[i] *= waitDecay;
       else waitLoad[i] = 0;
+      if (signalPassLoad[i] > 0.01) signalPassLoad[i] *= signalDecay;
+      else signalPassLoad[i] = 0;
     }
   }
 
@@ -2474,6 +2583,7 @@ body, #app, canvas {
   }
 
   function computeStats() {
+    reconcileBuildingReservations();
     syncHomeResidentCounts();
     const population = citizens.filter(c => c.resident && !c.removed).length;
     const movingIn = citizens.filter(c => !c.resident && !c.removed && c.state === 'กำลังย้ายเข้า').length;
@@ -2966,8 +3076,8 @@ body, #app, canvas {
       }
       if (!game.heatmap && game.zoom > .72) drawTrafficSignal(p.sx, p.sy, width, i);
       if (game.debug) {
-        const red = Math.floor(game.worldMin / 8) % 2;
-        ctx.fillStyle = red ? '#ff5252' : '#52ff82';
+        const sig = signalState(i);
+        ctx.fillStyle = sig.allRed ? '#ff5252' : (sig.phase ? '#52a8ff' : '#52ff82');
         roundRect(ctx, p.sx - width*.16, p.sy - width*.16, width*.32, width*.32, 3); ctx.fill();
       }
       ctx.restore();
@@ -2993,7 +3103,14 @@ body, #app, canvas {
   }
 
   function isJunctionCell(i) {
-    return road[i] && connCache[i] >= 3;
+    return road[i] && roadDegree(i) >= 3;
+  }
+  function isSignalControlledJunction(i) {
+    if (!road[i] || roadDegree(i) < 3) return false;
+    const axes = new Set();
+    for (const n of linkedNeighbors(i)) axes.add(moveAxis(n, i));
+    // If all connections run on one axis, it is a bend/merge, not a red-light junction.
+    return axes.size >= 2;
   }
   function isFourWayJunctionCell(i) {
     // ใช้จำนวนทางเชื่อมจริงจาก roadLinks แทน connCache เพื่อกัน cache เพี้ยนหลังแก้/ลบถนน
@@ -3030,9 +3147,20 @@ body, #app, canvas {
     return prev != null && next === prev;
   }
   function signalPhase(i) {
-    // Each junction has a deterministic offset so every red light does not switch at the exact same moment.
-    const offset = (i * 7) % 11;
-    return Math.floor((game.worldMin + offset) / 8) % 2; // 0 = east/west green, 1 = north/south green
+    return signalState(i).phase;
+  }
+  function signalState(i) {
+    // 20-minute game cycle: EW green, short all-red, NS green, short all-red.
+    // Offset by coordinate so nearby junctions are not perfectly synchronized.
+    const offset = ((i % MAP_W) * 3 + Math.floor(i / MAP_W) * 5) % 13;
+    const cycle = 20;
+    const green = 8.6;
+    const allRed = 1.4;
+    const t = ((game.worldMin + offset) % cycle + cycle) % cycle;
+    if (t < green) return { phase: 0, allRed: false, t };
+    if (t < green + allRed) return { phase: 0, allRed: true, t };
+    if (t < green + allRed + green) return { phase: 1, allRed: false, t };
+    return { phase: 1, allRed: true, t };
   }
   function moveAxis(from, to) {
     const fx = from % MAP_W, fy = Math.floor(from / MAP_W);
@@ -3043,7 +3171,9 @@ body, #app, canvas {
     return (dx * dy >= 0) ? 0 : 1; // 45° roads split into two compatible signal groups
   }
   function drawTrafficSignal(x, y, w, cellIdx) {
-    const phase = signalPhase(cellIdx);
+    if (!isSignalControlledJunction(cellIdx)) return;
+    const st = signalState(cellIdx);
+    const phase = st.phase;
     const r = clamp(w * .075, 1.5, 3.4);
     const off = w * .54;
     const lights = [
@@ -3062,7 +3192,7 @@ body, #app, canvas {
     for (const l of lights) {
       ctx.fillStyle = 'rgba(8,10,12,.78)';
       ctx.beginPath(); ctx.arc(x + l.x, y + l.y, r * 1.7, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = l.axis === phase ? '#50ff82' : '#ff4545';
+      ctx.fillStyle = st.allRed ? '#ff4545' : (l.axis === phase ? '#50ff82' : '#ff4545');
       ctx.beginPath(); ctx.arc(x + l.x, y + l.y, r, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
@@ -3641,7 +3771,7 @@ body, #app, canvas {
     const types = {};
     for (const v of vehicles) if (v.currentIdx === i || v.nextIdx === i) types[v.type] = (types[v.type]||0) + 1;
     selectionEl.innerHTML = `<div class="inspector-title">🛣️ ถนน ${x}, ${y}</div>
-      <div class="muted">${r.name} • ${r.lanes} เลน • ${connCache[i]>=3 ? 'ทางแยก 4 ขา/ไฟแดง' : 'ทางถนน'}</div>
+      <div class="muted">${r.name} • ${r.lanes} เลน • ${isSignalControlledJunction(i) ? 'ทางแยกมีไฟแดง' : connCache[i]>=3 ? 'ทางแยกไม่มีไฟแดง' : 'ทางถนน'}</div>
       <div class="metric-grid">
         ${toolMetric('รถบนช่อง', `${carsHere}/${laneCapacityAt(i)} คัน`)}
         ${toolMetric('Capacity', `${r.capacity} คัน/ช่อง`)}
